@@ -258,6 +258,14 @@ export function recall(query, k = 4, opts = {}) {
   return picked;
 }
 
+/** 两句话题的相似度（0~1）：判断"他是不是又在说同一件事" */
+export function similarity(a, b) {
+  const A = bigramTf(String(a || ''));
+  const B = bigramTf(String(b || ''));
+  if (!A.size || !B.size) return 0;
+  return cosine(A, B, new Map(), 1);
+}
+
 /** 给提示词用的一段"旧事背景"；没有相关记录就返回空串 */
 export function memoryHint(query, k = 4) {
   const hits = recall(query, k);
