@@ -1,0 +1,25 @@
+# 凭据和她的私人数据，绝对不要提交
+config.json
+authCode.txt
+persona.md
+*.dat
+
+# 运行期状态
+state.json
+state.bak.json
+memory.jsonl
+memory.raw.jsonl
+memory.*.old.jsonl
+heartbeat
+lock
+outbox*
+
+# 日志
+*.log
+
+# 依赖
+node_modules/
+
+# 系统
+.DS_Store
+Thumbs.db
