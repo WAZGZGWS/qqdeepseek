@@ -28,7 +28,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import pkgMail from 'mailparser';
-import { remember, recall, memoryHint, memoryStats, tokenize, similarity } from './memory.mjs';
+import { remember, recall, memoryHint, memoryStats, tokenize, similarity, recentRaw } from './memory.mjs';
 
 const { simpleParser } = pkgMail;
 const DIR = path.dirname(fileURLToPath(import.meta.url));   // 凭据、状态、记忆都放在脚本旁边
@@ -425,7 +425,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
     { role: 'system', content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') },
     ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
-如果这封信里他问到你的生日、而你还没有生日，就再单独写一行「#我: 生日 M-D」给自己定一个（只定这一次，定了就不再改）。）` },
+如果这封信里提到了你的生日（不管是他在问，还是你自己顺嘴说到"我几月几号生日"），而你还没有生日，就再单独写一行「#我: 生日 M-D」把它定下来——只定这一次，之后不许改口。）` },
   ];
   const budget = mode === 'short' ? 160 : mode === 'long' ? 520 : 380;
   let out = await callModel(apiKey, msgs, budget);
@@ -540,6 +540,51 @@ async function flushOutbox(config, state, auth) {
   return sent;
 }
 
+/** 周记 / 年记：从原文档案里翻这段时间的记录，写一封回顾 */
+async function writeDigest({ apiKey, config, state, auth, kind }) {
+  const days = kind === 'weekly' ? 7 : 365;
+  const rows = recentRaw(days, kind === 'weekly' ? 120 : 300);
+  if (!rows.length) { log(kind === 'weekly' ? '这周没聊过什么，不写周记' : '这一年没什么记录，不写年记'); return false; }
+  const lines = rows.slice().reverse().map((e) => {
+    const d = new Date(e.at);
+    const md = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `${md} ${e.who === 'he' ? '哥' : '我'}：${String(e.text).slice(0, 80)}`;
+  }).join('\n');
+  const facts = (state.facts || []).slice(-20).map((f) => '- ' + f.text).join('\n');
+  const what = kind === 'weekly' ? '这周' : '这一年';
+  const msg = `下面是${what}你们写信的记录（新的在上）：\n\n${lines}\n${facts ? '\n你记得关于哥的事：\n' + facts + '\n' : ''}\n写一封${kind === 'weekly' ? '周记' : '年度总结'}给他：用你平时的口吻，150~300 字，说说${what}他过得怎么样、你记着的几件事、你自己的感受。只写记录里有的，不许编。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
+  try {
+    const out = await callModel(apiKey, [{ role: 'system', content: persona() }, { role: 'user', content: msg }], kind === 'weekly' ? 700 : 900);
+    const cost = addCost(state, out.usage);
+    const mm = out.text.match(/^主题[:：]\s*(.+)\n+([\s\S]+)$/);
+    const subject = (mm ? mm[1] : kind === 'weekly' ? '这周' : '这一年').trim().slice(0, 20);
+    const body = humanize((mm ? mm[2] : out.text).trim(), kind === 'weekly' ? 700 : 900);
+    if (!body) return false;
+    await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
+    if (kind === 'weekly') state.lastWeeklyDay = today();
+    else state.lastYearlyYear = new Date().getFullYear();
+    saveState(state);
+    log(`写了${kind === 'weekly' ? '周记' : '年度总结'}：${subject}（约 ${cost.toFixed(5)} 元）`);
+    return true;
+  } catch (e) { log('写回顾失败：' + e.message); return false; }
+}
+
+/** 到点了吗：周记按周几+时间，年记按 12-31 */
+async function maybeSummaries(apiKey, config, state, auth) {
+  const cfg = config.summary || {};
+  if (cfg.weekly === false && cfg.yearly === false) return;
+  const now = new Date();
+  const hhmm = now.toLocaleTimeString('en-GB', { timeZone: TZ, hour12: false }).slice(0, 5);
+  if (cfg.weekly !== false && now.getDay() === Number(cfg.weeklyWeekday ?? 0) && hhmm >= (cfg.weeklyTime || '21:00') && state.lastWeeklyDay !== today()) {
+    await writeDigest({ apiKey, config, state, auth, kind: 'weekly' });
+  }
+  const md = now.toLocaleDateString('en-CA', { timeZone: TZ }).slice(5);
+  if (cfg.yearly !== false && md === '12-31' && hhmm >= (cfg.yearlyTime || '21:00') && Number(state.lastYearlyYear) !== now.getFullYear()) {
+    await writeDigest({ apiKey, config, state, auth, kind: 'yearly' });
+  }
+}
+
+/** 每天最多一封主动来信：有由头才发；安静时段、连发超限、刚聊过都不发 */
 async function maybeProactive(apiKey, config, state, auth) {
   const cfg = config.proactive || {};
   if (cfg.enabled === false) return;
@@ -840,11 +885,20 @@ async function main() {
     process.exit(0);
   }
   if (args.includes('--proactive')) { await maybeProactive(apiKey, config, state, auth); console.log('主动来信已尝试，看日志'); process.exit(0); }
+  if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly' }) ? '周记已发' : '没写成'); process.exit(0); }
+  if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly' }) ? '年记已发' : '没写成'); process.exit(0); }
   if (args.includes('--once')) {
     const r = await tick(config, state, auth, apiKey);
     const n = await flushOutbox(config, state, auth);
     console.log('本轮:', r, '发出', n);
     process.exit(0);
+  }
+
+  // 安全阀：带了参数却一个都没匹配上（比如拼错 --weekly），不要傻傻地启动守护进程，
+  // 否则会变成"第二个实例"跟正式服务抢同一个邮箱——这个坑真的踩过。
+  if (args.length) {
+    console.error('没认出的参数：' + args.join(' ') + '\n可用：--once / --status / --test / --say <文本> / --proactive / --weekly / --yearly / --purge [--yes]');
+    process.exit(2);
   }
 
   log(`邮件服务启动（${MAIL_USER}），时区 ${TZ}，正常每 ${POLL_MS / 1000} 秒看一次（出错会退避）`);
@@ -860,6 +914,7 @@ async function main() {
     catch (e) { log('发送队列出错：' + e.message); await alertOnce('send', '发信出错了：' + e.message); }
     beat();
     try { await maybeProactive(apiKey, config, state, auth); } catch (e) { log('主动来信出错：' + e.message); }
+    try { await maybeSummaries(apiKey, config, state, auth); } catch (e) { log('写回顾出错：' + e.message); }
     // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
     poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
     if (Date.now() - lastBeatLog > 25 * 60000) {
