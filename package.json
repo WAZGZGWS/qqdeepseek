@@ -9,7 +9,8 @@
     "start": "node mailbot.mjs",
     "once": "node mailbot.mjs --once",
     "status": "node mailbot.mjs --status",
-    "test": "node mailbot.mjs --test"
+    "check": "node mailbot.mjs --test",
+    "test": "node test/selftest.mjs"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
