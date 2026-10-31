@@ -251,6 +251,20 @@ export function splitSelf(out) {
   return { self, text: kept.join('\n').trim() };
 }
 
+/** 陌生人计数：同一地址累计多少封、够不够提醒、够不够拉黑 */
+export function bumpStranger(state, addr, at = Date.now()) {
+  if (Array.isArray(state.strangers)) state.strangers = {};   // 兼容旧的数组格式
+  state.strangers = state.strangers || {};
+  const rec = state.strangers[addr] || { count: 0, first: at, last: at, warnedAt: 0, blocked: false };
+  rec.count += 1;
+  rec.last = at;
+  state.strangers[addr] = rec;
+  const sinceWarn = rec.warnedAt ? at - rec.warnedAt : Number.POSITIVE_INFINITY;
+  const shouldWarn = rec.count >= 3 && sinceWarn > 24 * 3600 * 1000;
+  const shouldBlock = rec.count >= 10 && !rec.blocked;
+  return { rec, shouldWarn, shouldBlock };
+}
+
 /** 只认写死的那个地址：空的 owner 一律不放行（防止"第一封来信自动认主"） */
 export function isOwner(fromAddr, config) {
   const owner = String((config && config.owner) || '').trim().toLowerCase();
@@ -784,10 +798,25 @@ async function tick(config, state, auth, apiKey) {
       // 内容也不会进记忆库。绝不"自动认主"——否则谁先发信谁就成了主人。
       if (!String(config.owner || '').trim()) { log('config.owner 没填，拒收所有来信'); await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue; }
       if (!isOwner(fromAddr, config)) {
-        log('陌生人来信，忽略（不回、不记）：' + fromAddr);
-        state.strangers = (state.strangers || []).concat([{ from: fromAddr, at: Date.now() }]).slice(-20);
+        const { rec, shouldWarn, shouldBlock } = bumpStranger(state, fromAddr);
         saveState(state);
         await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`);
+        if (rec.blocked) { log('已拉黑的地址又来了一封，静默丢弃：' + fromAddr); continue; }
+        log(`陌生人来信，忽略（第 ${rec.count} 封）：` + fromAddr);
+        if (shouldBlock) { rec.blocked = true; saveState(state); log(`把 ${fromAddr} 拉黑了（累计 ${rec.count} 封）`); }
+        if (shouldWarn) {
+          rec.warnedAt = Date.now();
+          saveState(state);
+          try {
+            await sendMail({
+              to: config.owner,
+              subject: '（提醒）有人在敲她的信箱',
+              text: `有个地址在这段时间里发了 ${rec.count} 封：${fromAddr}\n最近一封的主题："${subject}"\n\n都被挡掉了，她没看到，也不会回。\n\n想彻底清净：QQ 邮箱 → 设置 → 收信规则，把"发件人不是你就移走"。`,
+              auth,
+            });
+            log('已发陌生人提醒：' + fromAddr);
+          } catch (e) { log('陌生人提醒没发出去：' + e.message); }
+        }
         continue;
       }
 
@@ -898,6 +927,13 @@ async function main() {
     console.log(`口令: ${!sec ? '未设置' : (config.secretEveryTime === true ? '每封都要带' : (state.secretOkAt ? '已认过门（以后不用带）' : '还没认过门（下一封要带一次）'))}`);
     console.log(`上一封语气: ${state.lastEmotion || '（无）'}`);
     console.log(`余额提醒: ${state.lowWarned ? '已提醒过（充值回 3 元以上会自动解除）' : '待命（低于 2 元会提醒一次）'}`);
+    const strangers = state.strangers && !Array.isArray(state.strangers) ? Object.entries(state.strangers) : [];
+    if (strangers.length) {
+      console.log(`陌生人来信: ${strangers.length} 个地址`);
+      for (const [addr, r] of strangers.slice(0, 5)) console.log(`  - ${addr}  ${r.count} 封${r.blocked ? '（已拉黑）' : ''}`);
+    } else {
+      console.log('陌生人来信: 没有');
+    }
     console.log(`余额: ${await balanceOf(apiKey)} 元`);
     process.exit(0);
   }
