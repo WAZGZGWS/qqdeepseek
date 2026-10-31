@@ -644,6 +644,10 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
     log('信里没有口令，当成冒充处理，不回');
     return false;
   }
+  if (secret) {
+    // 先摘掉再给她看：口令不该出现在她的上下文里，免得她哪天在回信里复述出去
+    body = String(body).split(secret).join('').replace(/^[\s，,。:：]+/, '').trim();
+  }
   // 上一封还没发出去，他又补了一封：合成一封回，别回两遍
   const pending = (state.outbox || []).find((o) => o.fromMail && Number(o.createdAt || 0) && Date.now() - o.createdAt < 10 * 60000);
   if (pending && pending.his) {
@@ -886,6 +890,7 @@ async function main() {
     (state.facts || []).slice(-10).forEach((f) => console.log('  - ' + f.text));
     console.log(`待发队列: ${(state.outbox || []).length} 封`);
     (state.outbox || []).forEach((o) => console.log(`  - ${new Date(o.dueAt).toLocaleTimeString('zh-CN', { hour12: false })}：${o.text.slice(0, 24)}`));
+    console.log(`口令: ${String(config.secret || '').trim() ? '已设置（信里要带，她会自动看不到）' : '未设置'}`);
     console.log(`上一封语气: ${state.lastEmotion || '（无）'}`);
     console.log(`余额提醒: ${state.lowWarned ? '已提醒过（充值回 3 元以上会自动解除）' : '待命（低于 2 元会提醒一次）'}`);
     console.log(`余额: ${await balanceOf(apiKey)} 元`);
