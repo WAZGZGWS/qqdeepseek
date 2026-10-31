@@ -21,5 +21,6 @@
     "weeklyTime": "21:00",
     "yearly": true,
     "yearlyTime": "21:00"
-  }
+  },
+  "secret": ""
 }
