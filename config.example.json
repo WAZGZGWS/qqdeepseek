@@ -14,5 +14,12 @@
     "quietTo": "08:00",
     "maxUnanswered": 2
   },
-  "timezone": "Asia/Shanghai"
+  "timezone": "Asia/Shanghai",
+  "summary": {
+    "weekly": true,
+    "weeklyWeekday": 0,
+    "weeklyTime": "21:00",
+    "yearly": true,
+    "yearlyTime": "21:00"
+  }
 }
