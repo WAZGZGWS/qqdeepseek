@@ -1,0 +1,19 @@
+{
+  "email": "她的邮箱@qq.com",
+  "authCode": "邮箱授权码（不是登录密码；QQ 邮箱在 设置→账户 里开 IMAP 后拿到）",
+  "apiKey": "sk-你的 DeepSeek key",
+  "owner": "你的邮箱@example.com",
+
+  "dailyCap": 20,
+  "dailyCostCap": 0.05,
+  "mailMaxAgeHours": 24,
+
+  "proactive": {
+    "enabled": true,
+    "time": "20:30",
+    "minGapHours": 6,
+    "quietFrom": "23:00",
+    "quietTo": "08:00",
+    "maxUnanswered": 2
+  }
+}
