@@ -189,6 +189,14 @@ await t('离谱的生日不会被记下', () => {
   assert.strictEqual(bot.splitSelf('#我: 喜欢吃辣').self.birthday, undefined);
 });
 
+await t('只认写死的主人地址（陌生人一律不进）', () => {
+  const cfg = { owner: 'Me@Example.com' };
+  assert.strictEqual(bot.isOwner('me@example.com', cfg), true);
+  assert.strictEqual(bot.isOwner('stranger@example.com', cfg), false);
+  assert.strictEqual(bot.isOwner('me@example.com', { owner: '' }), false, '空 owner 不该放行任何人');
+  assert.strictEqual(bot.isOwner('me@example.com', {}), false, '没配 owner 不该放行任何人');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
