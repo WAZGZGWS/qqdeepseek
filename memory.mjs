@@ -212,7 +212,7 @@ const norm = (s) => String(s || '').replace(/[^\u4e00-\u9fa5a-z0-9]/g, '');
 
 /** 从旧记录里捞最相关的 k 条（不含近 6 小时的，避免和上下文重复） */
 export function recall(query, k = 4, opts = {}) {
-  const { minScore = 1.6, excludeRecentMs = 6 * 3600 * 1000 } = opts;
+  const { minScore = 0, excludeRecentMs = 6 * 3600 * 1000 } = opts;   // 0 = 自动按最高分取
   const { entries, df, avgdl } = load();
   if (!entries.length) return [];
   const qTokens = [...new Set(tokenize(query))].slice(0, 60);
@@ -235,9 +235,14 @@ export function recall(query, k = 4, opts = {}) {
     const days = (now - (e.lastAt || e.at)) / 86400000;
     s *= Math.exp(-days / HALF_LIFE_DAYS);
     s *= Math.min(1.6, 1 + 0.2 * Math.log2(Number(e.weight || 1)));  // 说过越多次越优先
-    if (s >= minScore) scored.push({ e, s });
+    scored.push({ e, s });
   }
   scored.sort((a, b) => b.s - a.s);
+  // 相对阈值：只留分数接近最高的那些（语料大时自然就严，小时也不会全灭）
+  if (scored.length) {
+    const cutoff = Math.max(minScore || 0.15, scored[0].s * 0.45);
+    for (let i = scored.length - 1; i >= 0; i -= 1) if (scored[i].s < cutoff) scored.splice(i, 1);
+  }
   const picked = [];
   const seen = new Set();
   for (const { e } of scored) {
