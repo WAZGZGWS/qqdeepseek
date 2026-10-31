@@ -161,6 +161,13 @@ await t('不相干的问题不硬凑', () => {
   assert.strictEqual(mem.recall('在吗', 3).length, 0, '"在吗" 不该捞回任何旧事');
 });
 
+await t('参数写反了也能自动纠正（曾经真出过这个错）', () => {
+  mem.remember('这句是正文不是身份', 'he', Date.now() - 3 * 86400000);   // 故意写反
+  const raw = fs.readFileSync(path.join(DIR, 'memory.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(raw.every((r) => r.who === 'he' || r.who === 'me'), 'who 字段里混进了正文');
+  assert.ok(raw.some((r) => r.text.includes('这句是正文')), '正文没被正确存下来');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
