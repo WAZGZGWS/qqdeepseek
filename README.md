@@ -71,11 +71,12 @@
 
 ```bash
 npm install
+npm test                    # 21 项自测，不连邮箱、不调模型、不花钱
 
 cp config.example.json config.json
 # 编辑 config.json：email / authCode / apiKey / owner 四项必填
 
-node mailbot.mjs --test     # 测 IMAP / SMTP / 余额
+npm run check               # 测 IMAP / SMTP / 余额
 node mailbot.mjs --say 在吗  # 试一句她的回法（不写信）
 node mailbot.mjs --once     # 跑一轮就退
 node mailbot.mjs            # 常驻
@@ -135,7 +136,7 @@ Windows 上想再加一层保险（进程卡死也能拉起来）：用 `watchdo
 - **只认一个主人**：别的地址发来一律忽略
 - **依赖单一模型服务商**：key 失效或欠费，她只能退回几句模板
 - **不会越聊越聪明**：除了记忆，她不学习；能力上限就是 API 的上限
-- **没有自动化测试**：改动靠手测，这是本项目最不体面的地方
+- **测试只覆盖逻辑层**：`npm test` 跑 21 项断言（护栏、去重、截断、模板判定、备份回退），但不测“她像不像人”——那件事没法自动断言，只能你自己看
 
 ## 隐私
 
