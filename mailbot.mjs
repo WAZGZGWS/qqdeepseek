@@ -343,12 +343,22 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const hint = memoryHint(body, 4);
   const part = nowHour() < 6 ? '半夜' : nowHour() < 9 ? '早上' : nowHour() < 12 ? '上午' : nowHour() < 14 ? '中午' : nowHour() < 18 ? '下午' : nowHour() < 23 ? '晚上' : '深夜';
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
+  // 今天几号 + 距上一封信多久：让她能说"都 11 月了""你三天没理我"
+  const dp = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' })
+    .formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const dateStr = `${dp.month} 月 ${dp.day} 日`;
+  const gapMs = state && state.lastExchangeAt ? Date.now() - state.lastExchangeAt : 0;
+  const gapStr = !gapMs ? ''
+    : gapMs < 3600000 ? `距上一封信才 ${Math.max(1, Math.round(gapMs / 60000))} 分钟`
+      : gapMs < 86400000 ? `距上一封信 ${Math.round(gapMs / 3600000)} 小时`
+        : `距上一封信 ${Math.round(gapMs / 86400000)} 天`;
 
   const rules = [];
   if (mode === 'short') rules.push('这次只写一句，很短，十个字上下，别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}，你${sit.extra}。`);
+  rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
@@ -366,7 +376,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const { text, facts: raw } = splitMemory(out.text);
   const cap = mode === 'short' ? 40 : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
-  const allowed = [body, sit.weather, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
+  const allowed = [body, sit.weather, dateStr, gapStr, week, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
   return { reply, facts: raw, usage: out.usage, mode, sit };
 }
@@ -400,15 +410,15 @@ function budget(state, config, bal) {
   return '';
 }
 
-/** 发信延迟：白天像人一样慢半拍，深夜他醒着就快一点 */
+/** 发信延迟：白天压到 30 分钟内（免得"现在"过期），深夜他醒着就快一点 */
 function sendDelayMs(templateUsed) {
   if (templateUsed) return 20000 + Math.floor(Math.random() * 40000);
   const h = nowHour();
   if (h >= 23 || h < 8) return 60000 + Math.floor(Math.random() * 5 * 60000);   // 夜里 1~6 分钟
   const r = Math.random();
-  if (r < 0.2) return 2 * 60000 + Math.floor(Math.random() * 8 * 60000);        // 2~10 分钟
-  if (r < 0.8) return 10 * 60000 + Math.floor(Math.random() * 50 * 60000);      // 10~60 分钟
-  return 60 * 60000 + Math.floor(Math.random() * 90 * 60000);                   // 1~2.5 小时
+  if (r < 0.25) return 2 * 60000 + Math.floor(Math.random() * 6 * 60000);       // 2~8 分钟
+  if (r < 0.85) return 8 * 60000 + Math.floor(Math.random() * 12 * 60000);      // 8~20 分钟
+  return 20 * 60000 + Math.floor(Math.random() * 10 * 60000);                   // 20~30 分钟
 }
 
 function enqueue(state, item) {
@@ -521,6 +531,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   } else {
     const out = await askModel({ apiKey, history: state.history || [], body, facts: state.facts || [], state });
     text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
+    if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
     const cost = addCost(state, usage);
     log(`这封约 ${cost.toFixed(5)} 元（${mode}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
   }
