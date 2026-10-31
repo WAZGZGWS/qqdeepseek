@@ -633,6 +633,11 @@ async function maybeProactive(apiKey, config, state, auth) {
 }
 
 async function processOne({ body, subject, fromAddr, msgId, refs, config, state, auth, apiKey, bal }) {
+  const secret = String(config.secret || '').trim();
+  if (secret && !String(body || '').includes(secret)) {
+    log('信里没有口令，当成冒充处理，不回');
+    return false;
+  }
   // 上一封还没发出去，他又补了一封：合成一封回，别回两遍
   const pending = (state.outbox || []).find((o) => o.fromMail && Number(o.createdAt || 0) && Date.now() - o.createdAt < 10 * 60000);
   if (pending && pending.his) {
@@ -775,7 +780,7 @@ async function tick(config, state, auth, apiKey) {
 
       // 每天回信上限：到顶了别把这封信"吃掉"，留着明天看
       if (state.day !== today()) { state.day = today(); state.count = 0; }
-      if (Number(state.count || 0) >= Number(config.dailyCap || 20)) {
+      if (Number(state.count || 0) >= Number(config.dailyCap || 35)) {
         log('今天的回信额度用完了，剩下的信留到明天（不标记已读）');
         if (state.quotaNotifiedDay !== today()) {
           state.quotaNotifiedDay = today();
@@ -797,6 +802,12 @@ async function tick(config, state, auth, apiKey) {
     }
 
     if (batch.length) {
+      // 首次运行或状态丢失（seenUids 空）时，收件箱里可能躺着一堆老信。
+      // 这时候只回最新一封，其余的标已读跳过——宁可漏，也不批量重回。
+      if (!(state.seenUids || []).length && batch.length > 1) {
+        log(`第一次跑（或状态丢了），收件箱里有 ${batch.length} 封，只回最新一封，其余跳过`);
+        batch.splice(0, batch.length - 1);
+      }
       // 一口气发了几封：合成一封回，别刷屏
       const merged = {
         body: batch.length === 1 ? batch[0].body : batch.map((b, i) => `（第 ${i + 1} 封）\n${b.body}`).join('\n\n'),
@@ -823,7 +834,7 @@ async function main() {
   const args = process.argv.slice(2);
   fs.mkdirSync(DIR, { recursive: true });
   single();
-  const config = readJson(CONFIG, { email: '', owner: '', dailyCap: 20, dailyCostCap: 0.05 });
+  const config = readJson(CONFIG, { email: '', owner: '', dailyCap: 35, dailyCostCap: 0.05 });
   const li = args.indexOf('--lowbal');
   if (li >= 0) BAL_OVERRIDE = Number(args[li + 1]);
   TZ = String(config.timezone || 'Asia/Shanghai');
