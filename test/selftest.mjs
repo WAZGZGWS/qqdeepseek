@@ -73,6 +73,11 @@ await t('没依据的事实丢掉', () => {
   assert.strictEqual(kept.length, 0);
 });
 
+await t('短事实允许改写措辞（"最近总加班" vs "天天加班"）', () => {
+  const kept = bot.groundFacts(['最近总加班'], '天天加班到半夜，晚饭都没吃');
+  assert.strictEqual(kept.length, 1, '短事实被误杀');
+});
+
 console.log('\n[4] 数字护栏');
 await t('信里有的数字放行', () => {
   const out = bot.guardNumbers('涨了 3000 块啊。早点睡。', '工资涨了 3000 块');
