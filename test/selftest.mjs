@@ -197,6 +197,28 @@ await t('只认写死的主人地址（陌生人一律不进）', () => {
   assert.strictEqual(bot.isOwner('me@example.com', {}), false, '没配 owner 不该放行任何人');
 });
 
+await t('陌生人来信计数：3 封提醒、10 封拉黑', () => {
+  const st = { strangers: [] };   // 故意用旧格式，顺便测迁移
+  const r1 = bot.bumpStranger(st, 'x@example.com', 1000);
+  assert.strictEqual(r1.rec.count, 1);
+  assert.strictEqual(r1.shouldWarn, false, '一封不该提醒');
+
+  const r2 = bot.bumpStranger(st, 'x@example.com', 2000);
+  assert.strictEqual(r2.rec.count, 2);
+  const r3 = bot.bumpStranger(st, 'x@example.com', 3000);
+  assert.strictEqual(r3.shouldWarn, true, '第三封应该提醒');
+  r3.rec.warnedAt = 3000;
+  const r4 = bot.bumpStranger(st, 'x@example.com', 4000);
+  assert.strictEqual(r4.shouldWarn, false, '24 小时内不该重复提醒');
+
+  let last;
+  for (let i = 5; i <= 10; i += 1) last = bot.bumpStranger(st, 'x@example.com', i * 1000);
+  assert.strictEqual(last.rec.count, 10);
+  assert.strictEqual(last.shouldBlock, true, '十封应该拉黑');
+  last.rec.blocked = true;
+  assert.strictEqual(bot.bumpStranger(st, 'x@example.com', 11000).shouldBlock, false, '拉黑后不再重复拉黑');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
