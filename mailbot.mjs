@@ -234,6 +234,23 @@ export function splitMemory(out) {
   return { text: kept.join('\n').trim(), facts };
 }
 
+/** 从输出里抠「#我: 生日 3-14」这类关于她自己的固定设定；只取生日 */
+export function splitSelf(out) {
+  const self = {};
+  const kept = [];
+  for (const line of String(out || '').split('\n')) {
+    const m = line.match(/^#?\s*(我|自我)[:：]\s*(.+)$/);
+    if (!m) { kept.push(line); continue; }
+    const mm = m[2].match(/生日[^0-9]*(\d{1,2})\s*[-月\/]\s*(\d{1,2})/);
+    if (mm) {
+      const mo = Number(mm[1]);
+      const dd = Number(mm[2]);
+      if (mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31) self.birthday = `${mo}-${dd}`;
+    }
+  }
+  return { self, text: kept.join('\n').trim() };
+}
+
 /** 事实入库前校验：必须能在他的原信里找到依据，否则是模型脑补的，丢掉 */
 export function groundFacts(facts, body) {
   const bodySet = new Set(tokenize(body).filter((t) => t.length === 2));
@@ -394,6 +411,10 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (Math.random() < 0.4) rules.push('可以拎他信里用过的一个词重复一下再反驳或追问，像真人抓字眼。');
   rules.push('别用他信里没有的数字、日期、金额、人名地名。');
   rules.push('记忆片段里的事只能照抄，不许给它补时间、补地点、补细节。');
+  if (state && state.me && state.me.birthday) {
+    const [mo, dd] = state.me.birthday.split('-');
+    rules.push(`你自己的生日是 ${mo} 月 ${dd} 日。他要是问起，直接把日子说出来（就说"${mo} 月 ${dd} 日"），别只反问、别改口、也别每年换一个。`);
+  }
   // 别把刚问过的问题再问一遍
   const asked = (history || []).filter((h) => h.role === 'assistant').slice(-3)
     .flatMap((h) => String(h.text || '').split(/(?<=[。！？!?~])/))
@@ -403,11 +424,18 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const msgs = [
     { role: 'system', content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') },
     ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
-    { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。）` },
+    { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
+如果这封信里他问到你的生日、而你还没有生日，就再单独写一行「#我: 生日 M-D」给自己定一个（只定这一次，定了就不再改）。）` },
   ];
   const budget = mode === 'short' ? 160 : mode === 'long' ? 520 : 380;
   let out = await callModel(apiKey, msgs, budget);
-  let parsed = splitMemory(out.text);
+  let parsed0 = splitSelf(out.text);
+  let parsed = splitMemory(parsed0.text);
+  if (parsed0.self.birthday && state && (!state.me || !state.me.birthday)) {
+    state.me = { ...(state.me || {}), birthday: parsed0.self.birthday, setAt: Date.now() };
+    saveState(state);
+    log('她给自己定下了生日：' + parsed0.self.birthday);
+  }
   let usage = out.usage;
   if (!parsed.text.trim()) {
     // 极短模式偶尔把预算全用在「#记忆」那行上，正文是空的。
@@ -419,7 +447,9 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const { text, facts: raw } = parsed;
   const cap = mode === 'short' ? 24 : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
-  const allowed = [body, sit.weather, dateStr, gapStr, week, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
+  // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
+  const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
+  const allowed = [body, sit.weather, dateStr, gapStr, week, selfNums, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
   return { reply, facts: raw, usage, mode, sit };
 }
