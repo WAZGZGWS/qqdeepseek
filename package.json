@@ -1,0 +1,19 @@
+{
+  "name": "mail-penpal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "用邮箱和 AI『她』写信：一封约 0.001 元，记得你说过的事",
+  "main": "mailbot.mjs",
+  "scripts": {
+    "start": "node mailbot.mjs",
+    "once": "node mailbot.mjs --once",
+    "status": "node mailbot.mjs --status",
+    "test": "node mailbot.mjs --test"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.14"
+  }
+}
