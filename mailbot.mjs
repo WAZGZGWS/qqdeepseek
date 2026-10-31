@@ -251,6 +251,12 @@ export function splitSelf(out) {
   return { self, text: kept.join('\n').trim() };
 }
 
+/** 只认写死的那个地址：空的 owner 一律不放行（防止"第一封来信自动认主"） */
+export function isOwner(fromAddr, config) {
+  const owner = String((config && config.owner) || '').trim().toLowerCase();
+  return !!owner && String(fromAddr || '').trim().toLowerCase() === owner;
+}
+
 /** 事实入库前校验：必须能在他的原信里找到依据，否则是模型脑补的，丢掉 */
 export function groundFacts(facts, body) {
   const bodySet = new Set(tokenize(body).filter((t) => t.length === 2));
@@ -766,9 +772,16 @@ async function tick(config, state, auth, apiKey) {
       state.seenUids = state.seenUids || [];
       if (state.seenUids.includes(String(uid)) || (msgId && (state.seen || []).includes(msgId))) { await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue; }
 
-      const owner = String(config.owner || '').toLowerCase();
-      if (!owner) { config.owner = fromAddr; writeJson(CONFIG, config); log(`第一封来信来自 ${fromRaw}，已记为主人`); }
-      else if (fromAddr !== owner) { log('忽略非主人来信：' + fromRaw); await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue; }
+      // 只认 config.owner 里写死的那个地址。陌生人来信：标记已读、记一行日志、这辈子不回，
+      // 内容也不会进记忆库。绝不"自动认主"——否则谁先发信谁就成了主人。
+      if (!String(config.owner || '').trim()) { log('config.owner 没填，拒收所有来信'); await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue; }
+      if (!isOwner(fromAddr, config)) {
+        log('陌生人来信，忽略（不回、不记）：' + fromAddr);
+        state.strangers = (state.strangers || []).concat([{ from: fromAddr, at: Date.now() }]).slice(-20);
+        saveState(state);
+        await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`);
+        continue;
+      }
 
       const dateRaw = headerField(head, 'Date');
       const ageH = dateRaw ? (Date.now() - Date.parse(dateRaw)) / 3600000 : 0;
@@ -838,6 +851,10 @@ async function main() {
   const li = args.indexOf('--lowbal');
   if (li >= 0) BAL_OVERRIDE = Number(args[li + 1]);
   TZ = String(config.timezone || 'Asia/Shanghai');
+  if (!String(config.owner || '').trim()) {
+    console.error('config.json 里的 owner 必须填：写你自己的邮箱。为了安全，程序不会替你"自动认主"。');
+    process.exit(1);
+  }
   const state = loadState({ history: [], seen: [], facts: [], count: 0, day: '' });
   MAIL_USER = String(config.email || process.env.MAILBOT_EMAIL || MAIL_USER).trim();
   const tryDat = (f) => { try { return fs.existsSync(f) ? decrypt(f) : ''; } catch { return ''; } };
