@@ -178,6 +178,17 @@ await t('话题相似度能认出"同一件事"', () => {
   assert.ok(mem.similarity('今天加班到半夜', '周末想吃火锅') < 0.2, '不相干的话题被算成相似');
 });
 
+await t('能从输出里抠出她自己的生日设定', () => {
+  const { self, text } = bot.splitSelf('哦，我生日 3 月 14 日。\n#我: 生日 3-14');
+  assert.strictEqual(self.birthday, '3-14');
+  assert.strictEqual(text, '哦，我生日 3 月 14 日。');
+});
+
+await t('离谱的生日不会被记下', () => {
+  assert.strictEqual(bot.splitSelf('#我: 生日 13-40').self.birthday, undefined);
+  assert.strictEqual(bot.splitSelf('#我: 喜欢吃辣').self.birthday, undefined);
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
