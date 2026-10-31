@@ -43,17 +43,18 @@ const beat = () => { try { fs.writeFileSync(HEARTBEAT, String(Date.now())); } ca
 let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 email 填进来
 const IMAP = { host: 'imap.qq.com', port: 993 };
 const SMTP = { host: 'smtp.qq.com', port: 465 };
-const POLL_MS = 60 * 1000;
+const POLL_MS = 100 * 1000;   // 正常轮询间隔；失败会退避，最长 10 分钟
 const MAX_HISTORY = 8;
 const MAX_INCOMING = 1200;
+let TZ = 'Asia/Shanghai';   // 由 config.json 的 timezone 覆盖
 const PARTICLE_LIST = ['诶', '呢', '啦', '呗', '哼', '嘛'];
-const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function rotateLog() {
   try { const s = fs.statSync(LOG); if (s.size > 2 * 1024 * 1024) { const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).slice(-800); fs.writeFileSync(LOG, lines.join('\n') + '\n'); } } catch {}
 }
-const log = (m) => { rotateLog(); const l = `[${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}] ${m}`; try { fs.appendFileSync(LOG, l + '\n'); } catch {} console.log(l); };
+const log = (m) => { rotateLog(); const l = `[${new Date().toLocaleString('zh-CN', { timeZone: TZ, hour12: false })}] ${m}`; try { fs.appendFileSync(LOG, l + '\n'); } catch {} console.log(l); };
 const readJson = (p, d) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
 const writeJson = (p, v) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, null, 2)); } catch {} };
 
@@ -197,7 +198,7 @@ export function templateKind(text) {
   return '';
 }
 const isNight = () => { const h = nowHour(); return h >= 23 || h < 8; };
-export function nowHour() { return Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false })); }
+export function nowHour() { return Number(new Date().toLocaleString('en-GB', { timeZone: TZ, hour: '2-digit', hour12: false })); }
 
 async function callModel(apiKey, messages, maxTokens = 380, temperature = 1.25) {
   const r = await fetch('https://api.deepseek.com/chat/completions', {
@@ -349,7 +350,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const part = nowHour() < 6 ? '半夜' : nowHour() < 9 ? '早上' : nowHour() < 12 ? '上午' : nowHour() < 14 ? '中午' : nowHour() < 18 ? '下午' : nowHour() < 23 ? '晚上' : '深夜';
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
   // 今天几号 + 距上一封信多久：让她能说"都 11 月了""你三天没理我"
-  const dp = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' })
+  const dp = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: TZ, month: 'numeric', day: 'numeric' })
     .formatToParts(new Date()).map((x) => [x.type, x.value]));
   const dateStr = `${dp.month} 月 ${dp.day} 日`;
   const gapMs = state && state.lastExchangeAt ? Date.now() - state.lastExchangeAt : 0;
@@ -480,7 +481,7 @@ async function maybeProactive(apiKey, config, state, auth) {
   const cfg = config.proactive || {};
   if (cfg.enabled === false) return;
   const now = new Date();
-  const hhmm = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Shanghai', hour12: false }).slice(0, 5);
+  const hhmm = now.toLocaleTimeString('en-GB', { timeZone: TZ, hour12: false }).slice(0, 5);
   const at = cfg.time || '20:30';
   if (hhmm < at) return;
   const quietFrom = cfg.quietFrom || '23:00';
@@ -711,6 +712,7 @@ async function main() {
   const config = readJson(CONFIG, { email: '', owner: '', dailyCap: 20, dailyCostCap: 0.05 });
   const li = args.indexOf('--lowbal');
   if (li >= 0) BAL_OVERRIDE = Number(args[li + 1]);
+  TZ = String(config.timezone || 'Asia/Shanghai');
   const state = loadState({ history: [], seen: [], facts: [], count: 0, day: '' });
   MAIL_USER = String(config.email || process.env.MAILBOT_EMAIL || MAIL_USER).trim();
   const tryDat = (f) => { try { return fs.existsSync(f) ? decrypt(f) : ''; } catch { return ''; } };
@@ -782,18 +784,26 @@ async function main() {
     process.exit(0);
   }
 
-  log(`邮件服务启动（${MAIL_USER}），每 ${POLL_MS / 1000} 秒看一次`);
+  log(`邮件服务启动（${MAIL_USER}），时区 ${TZ}，正常每 ${POLL_MS / 1000} 秒看一次（出错会退避）`);
   beat();
+  let poll = POLL_MS;
+  let lastBeatLog = 0;
   for (;;) {
+    let failed = false;
     try { await Promise.race([tick(config, state, auth, apiKey), sleep(150000).then(() => { throw new Error('这一轮超过 150 秒，放弃'); })]); }
-    catch (e) { log('这一轮出错：' + e.message); await alertOnce('tick', '收信这一轮连续出错：' + e.message); }
+    catch (e) { failed = true; log('这一轮出错：' + e.message); await alertOnce('tick', '收信这一轮连续出错：' + e.message); }
     beat();
     try { await flushOutbox(config, state, auth); }
     catch (e) { log('发送队列出错：' + e.message); await alertOnce('send', '发信出错了：' + e.message); }
     beat();
     try { await maybeProactive(apiKey, config, state, auth); } catch (e) { log('主动来信出错：' + e.message); }
-    log('本轮结束，等下一轮');
-    await sleep(POLL_MS);
+    // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
+    poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
+    if (Date.now() - lastBeatLog > 25 * 60000) {
+      lastBeatLog = Date.now();
+      log(`在跑（上次${failed ? '出错' : '正常'}，下次 ${Math.round(poll / 1000)} 秒后，今天已回 ${state.count || 0} 封）`);
+    }
+    await sleep(poll);
   }
 }
 
