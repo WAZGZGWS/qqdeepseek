@@ -173,6 +173,11 @@ await t('参数写反了也能自动纠正（曾经真出过这个错）', () =>
   assert.ok(raw.some((r) => r.text.includes('这句是正文')), '正文没被正确存下来');
 });
 
+await t('话题相似度能认出"同一件事"', () => {
+  assert.ok(mem.similarity('今天加班到半夜', '今天又加班到半夜') >= 0.5, '同义重复没认出来');
+  assert.ok(mem.similarity('今天加班到半夜', '周末想吃火锅') < 0.2, '不相干的话题被算成相似');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
