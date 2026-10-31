@@ -405,13 +405,23 @@ async function askModel({ apiKey, history, body, facts, state }) {
     ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。）` },
   ];
-  const out = await callModel(apiKey, msgs, mode === 'short' ? 90 : mode === 'long' ? 520 : 380);
-  const { text, facts: raw } = splitMemory(out.text);
+  const budget = mode === 'short' ? 160 : mode === 'long' ? 520 : 380;
+  let out = await callModel(apiKey, msgs, budget);
+  let parsed = splitMemory(out.text);
+  let usage = out.usage;
+  if (!parsed.text.trim()) {
+    // 极短模式偶尔把预算全用在「#记忆」那行上，正文是空的。
+    // 这时候再要一次，明确只要正文——比发一句模板话给她强。
+    const again = await callModel(apiKey, [...msgs, { role: 'user', content: '刚才那条只有记忆行没有正文。这次只写回信，不要写记忆行。' }], Math.max(budget, 200));
+    parsed = splitMemory(again.text);
+    usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
+  }
+  const { text, facts: raw } = parsed;
   const cap = mode === 'short' ? 24 : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
   const allowed = [body, sit.weather, dateStr, gapStr, week, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
-  return { reply, facts: raw, usage: out.usage, mode, sit };
+  return { reply, facts: raw, usage, mode, sit };
 }
 
 let balCache = { at: 0, val: -1 };
