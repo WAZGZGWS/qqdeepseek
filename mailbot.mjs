@@ -151,7 +151,12 @@ async function parseBody(raw, subject) {
       .filter((l) => !l.trim().startsWith('>') && !/^(发件人|发送时间|收件人|主题)[:：]/.test(l.trim()))
       .join('\n').replace(/[ \t]{2,}/g, ' ').trim();
     if (!text) text = '（他没写正文，主题是：' + subject + '）';
-    return text.slice(0, MAX_INCOMING);
+    // 长信别一刀切掉结尾：留开头 800 + 结尾 400，"你觉得呢"常在最后
+    if (text.length > MAX_INCOMING) {
+      const head = Math.floor(MAX_INCOMING * 0.66);
+      text = text.slice(0, head) + '\n……（中间省略）……\n' + text.slice(-(MAX_INCOMING - head));
+    }
+    return text;
   } catch { return '（这封信读不出来，主题是：' + subject + '）'; }
 }
 
@@ -366,6 +371,11 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (Math.random() < 0.4) rules.push('可以拎他信里用过的一个词重复一下再反驳或追问，像真人抓字眼。');
   rules.push('别用他信里没有的数字、日期、金额、人名地名。');
   rules.push('记忆片段里的事只能照抄，不许给它补时间、补地点、补细节。');
+  // 别把刚问过的问题再问一遍
+  const asked = (history || []).filter((h) => h.role === 'assistant').slice(-3)
+    .flatMap((h) => String(h.text || '').split(/(?<=[。！？!?~])/))
+    .filter((s) => /[？?]/.test(s)).map((s) => s.trim()).slice(-3);
+  if (asked.length) rules.push(`这些你最近刚问过，别再重复问：${asked.join(' / ')}`);
 
   const msgs = [
     { role: 'system', content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') },
@@ -594,16 +604,37 @@ async function tick(config, state, auth, apiKey) {
   try {
     await imap.cmd(`LOGIN "${MAIL_USER}" "${auth}"`);
     await imap.cmd('SELECT INBOX');
-    const search = await imap.cmd('UID SEARCH UNSEEN');
-    const uids = [...search.text.matchAll(/^\* SEARCH ([0-9 ]+)$/gm)].flatMap((m) => m[1].trim().split(/\s+/)).filter(Boolean);
+    // 不再依赖"未读"标记（别的客户端预览一下就会把信标已读，她就不回了）：
+    // 每次扫最近 20 封，靠 UID + Message-ID 去重
+    const search = await imap.cmd('UID SEARCH ALL');
+    const allUids = [...search.text.matchAll(/^\* SEARCH ([0-9 ]+)$/gm)].flatMap((m) => m[1].trim().split(/\s+/)).filter(Boolean);
+    const uids = allUids.slice(-20);
     if (!uids.length) return { handled: 0 };
 
+    /** 从 IMAP 响应里抠出 {n} 后面那段字面量 */
+    const literal = (res) => {
+      const mm = res.buf.toString('utf8').match(/\{(\d+)\}\r?\n/);
+      if (!mm) return res.text;
+      const mark = `{${mm[1]}}\r\n`;
+      const at = res.buf.indexOf(Buffer.from(mark)) + mark.length;
+      return res.buf.slice(at, at + Number(mm[1])).toString('utf8');
+    };
+
     const batch = [];
-    for (const uid of uids.slice(-5)) {
-      const got = await imap.cmd(`UID FETCH ${uid} BODY.PEEK[]`);
-      const mm = got.buf.toString('utf8').match(/\{(\d+)\}\r?\n/);
-      let raw = got.text;
-      if (mm) { const mark = `{${mm[1]}}\r\n`; const at = got.buf.indexOf(Buffer.from(mark)) + mark.length; raw = got.buf.slice(at, at + Number(mm[1])).toString('utf8'); }
+    for (const uid of uids) {
+      // 先看大小：带大附件的信只拉头部+正文，别为了一个 20MB 的照片把整轮卡死
+      const sizeRes = await imap.cmd(`UID FETCH ${uid} (RFC822.SIZE)`);
+      const sm = sizeRes.text.match(/RFC822\.SIZE (\d+)/i);
+      const size = sm ? Number(sm[1]) : 0;
+      let raw = '';
+      if (size > 2 * 1024 * 1024) {
+        const hres = await imap.cmd(`UID FETCH ${uid} BODY.PEEK[HEADER]`);
+        const tres = await imap.cmd(`UID FETCH ${uid} BODY.PEEK[TEXT]`);
+        raw = literal(hres) + '\r\n\r\n' + literal(tres);
+        log(`这封 ${Math.round(size / 1024 / 1024)} MB，只读正文，不拉附件`);
+      } else {
+        raw = literal(await imap.cmd(`UID FETCH ${uid} BODY.PEEK[]`));
+      }
       const head = raw.split(/\r?\n\r?\n/)[0] || '';
       const fromRaw = decodeMime(headerField(head, 'From'));
       const fromAddr = ((fromRaw.match(/[^<>\s]+@[^<>\s]+/) || [''])[0]).toLowerCase();
@@ -627,12 +658,23 @@ async function tick(config, state, auth, apiKey) {
         await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue;
       }
 
+      // 每天回信上限：到顶了别把这封信"吃掉"，留着明天看
+      if (state.day !== today()) { state.day = today(); state.count = 0; }
+      if (Number(state.count || 0) >= Number(config.dailyCap || 20)) {
+        log('今天的回信额度用完了，剩下的信留到明天（不标记已读）');
+        if (state.quotaNotifiedDay !== today()) {
+          state.quotaNotifiedDay = today();
+          saveState(state);
+          try {
+            await sendMail({ to: config.owner || fromAddr, subject: '（今天聊够了）', text: '今天的额度用完了。剩下的信先留着，我明天再看——不是不理你。', auth });
+          } catch (e) { log('额度提醒没发出去：' + e.message); }
+        }
+        break;
+      }
+
       state.seenUids = state.seenUids.concat([String(uid)]).slice(-500);
       saveState(state);
       await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`);
-
-      if (state.day !== today()) { state.day = today(); state.count = 0; }
-      if (Number(state.count || 0) >= Number(config.dailyCap || 20)) { log('今天的回信额度用完了'); break; }
 
       const body = await parseBody(raw, subject);
       log('收到来信正文：' + body.slice(0, 30));
