@@ -197,7 +197,9 @@ export function templateKind(text) {
   if (/哈哈|笑死|hhh|233/i.test(t)) return 'haha';
   return '';
 }
-const isNight = () => { const h = nowHour(); return h >= 23 || h < 8; };
+// 只有 23:00–06:00 才算"深夜"。06:00–08:00 是早上，
+// 那时候回"快去睡吧"很怪（这个错真的发生过）。
+const isNight = () => { const h = nowHour(); return h >= 23 || h < 6; };
 export function nowHour() { return Number(new Date().toLocaleString('en-GB', { timeZone: TZ, hour: '2-digit', hour12: false })); }
 
 async function callModel(apiKey, messages, maxTokens = 380, temperature = 1.25) {
@@ -238,7 +240,10 @@ export function groundFacts(facts, body) {
     const ts = [...new Set(tokenize(f).filter((t) => t.length === 2))];
     if (!ts.length) return false;
     const hit = ts.filter((t) => bodySet.has(t)).length;
-    return hit / ts.length >= 0.5;
+    // 短事实（≤10 字）只要有一个词对得上就收——模型总结时总会改写措辞，
+    // "最近总加班" vs "天天加班" 也该算有依据；长事实仍要 35% 以上重合兜底。
+    const short = String(f).length <= 10;
+    return short ? hit >= 1 : hit / ts.length >= 0.35;
   });
 }
 
@@ -309,16 +314,26 @@ async function weather() {
 
 const EXTRAS = ['刚睡醒', '在吃饭', '刚洗完澡', '窝在沙发上', '在等外卖', '有点困', '刚刷完手机', '在发呆', '刚晾完衣服'];
 
-/** 此刻的状态 + 冷却：最近三封用过的状态词、连着提过天气，这次就换/别提 */
+/** 此刻的状态 + 冷却：最近三封用过的状态词、连着提过天气，这次就换/别提；
+ *  另外四成概率"接着上一封的状态"，让人觉得她还是同一个人 */
 function situation(state, wx) {
   const recent = state.recentExtras || [];
-  const pool = EXTRAS.filter((x) => !recent.includes(x));
-  const extra = (pool.length ? pool : EXTRAS)[Math.floor(Math.random() * (pool.length ? pool.length : EXTRAS.length))];
+  const last = state.lastSituation;
+  const canContinue = last && last.extra && Date.now() - last.at < 6 * 3600 * 1000;
+  let extra;
+  let continuing = false;
+  if (canContinue && Math.random() < 0.4) {
+    extra = last.extra;
+    continuing = true;
+  } else {
+    const pool = EXTRAS.filter((x) => !recent.includes(x));
+    extra = (pool.length ? pool : EXTRAS)[Math.floor(Math.random() * (pool.length ? pool.length : EXTRAS.length))];
+  }
   const wxRecent = state.recentWeather || [];
   const wet = wxRecent.slice(-2).filter(Boolean).length >= 2;
   state.__pendingExtra = extra;
   state.__pendingWeather = !wet && !!wx.text;
-  return { extra, weather: wet ? '' : (wx.text || ''), wet };
+  return { extra, weather: wet ? '' : (wx.text || ''), wet, continuing };
 }
 
 /** 口癖降频：最近 5 封里出现过 3 次以上的，这次禁掉 */
@@ -364,6 +379,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}，你${sit.extra}。`);
+  if (sit.continuing) rules.push(`你上一封就说过自己在${sit.extra}，这次顺势接着（还没弄完 / 刚弄完），别换一个新的状态。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
@@ -466,6 +482,7 @@ async function flushOutbox(config, state, auth) {
     state.unansweredProactive = 0;
     state.lastEmotion = item.emotion || state.lastEmotion;
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
+    if (item.extra) state.lastSituation = { extra: item.extra, at: Date.now() };   // 下一封可以接着这个状态
     state.recentWeather = (state.recentWeather || []).concat([!!item.weatherUsed]).slice(-4);
     state.recentParticles = (state.recentParticles || []).concat([PARTICLE_LIST.filter((p) => item.text.includes(p))]).slice(-5);
     if (item.his) { remember('he', item.his); remember('me', item.text); }
