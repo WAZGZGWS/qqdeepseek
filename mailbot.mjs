@@ -467,7 +467,7 @@ async function flushOutbox(config, state, auth) {
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
     state.recentWeather = (state.recentWeather || []).concat([!!item.weatherUsed]).slice(-4);
     state.recentParticles = (state.recentParticles || []).concat([PARTICLE_LIST.filter((p) => item.text.includes(p))]).slice(-5);
-    if (item.his) { remember(item.his, 'he'); remember(item.text, 'me'); }
+    if (item.his) { remember('he', item.his); remember('me', item.text); }
     state.outbox = state.outbox.filter((x) => x.id !== item.id);
     saveState(state);
     sent += 1;
