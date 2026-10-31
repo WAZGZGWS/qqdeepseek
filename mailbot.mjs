@@ -541,7 +541,7 @@ async function flushOutbox(config, state, auth) {
 }
 
 /** 周记 / 年记：从原文档案里翻这段时间的记录，写一封回顾 */
-async function writeDigest({ apiKey, config, state, auth, kind }) {
+async function writeDigest({ apiKey, config, state, auth, kind, dry = false }) {
   const days = kind === 'weekly' ? 7 : 365;
   const rows = recentRaw(days, kind === 'weekly' ? 120 : 300);
   if (!rows.length) { log(kind === 'weekly' ? '这周没聊过什么，不写周记' : '这一年没什么记录，不写年记'); return false; }
@@ -552,7 +552,12 @@ async function writeDigest({ apiKey, config, state, auth, kind }) {
   }).join('\n');
   const facts = (state.facts || []).slice(-20).map((f) => '- ' + f.text).join('\n');
   const what = kind === 'weekly' ? '这周' : '这一年';
-  const msg = `下面是${what}你们写信的记录（新的在上）：\n\n${lines}\n${facts ? '\n你记得关于哥的事：\n' + facts + '\n' : ''}\n写一封${kind === 'weekly' ? '周记' : '年度总结'}给他：用你平时的口吻，150~300 字，说说${what}他过得怎么样、你记着的几件事、你自己的感受。只写记录里有的，不许编。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
+  // 让她自己选写法，别每周都一个模板味
+  const styles = kind === 'weekly'
+    ? ['像唠嗑一样，挑两三件你想说的说，别的略过', '带点吐槽，把这周他让你无语的地方也写进去', '像记在备忘录里的，短句为主，可以没头没尾', '只讲一件这周你最记得的事，其它不提']
+    : ['按季节过一遍，只写你记得最清楚的那些', '像给一年做个了断，带点感慨但别煽情', '挑三件今年最想说的事，其余略过', '当成写给自己看的，顺手也给他一份'];
+  const style = styles[Math.floor(Math.random() * styles.length)];
+  const msg = `下面是${what}你们写信的记录（新的在上）：\n\n${lines}\n${facts ? '\n你记得关于哥的事：\n' + facts + '\n' : ''}\n写一封${kind === 'weekly' ? '周记' : '年度总结'}给他：用你平时的口吻，150~300 字，说说${what}他过得怎么样、你记着的几件事、你自己的感受。只写记录里有的，不许编。\n风格：${style}。\n别写成报告：不要分条列举，不要"本周总结""年度回顾"这种标题，不要开头写"这周你……"的排比。主题名你自己起，越随意越好。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
   try {
     const out = await callModel(apiKey, [{ role: 'system', content: persona() }, { role: 'user', content: msg }], kind === 'weekly' ? 700 : 900);
     const cost = addCost(state, out.usage);
@@ -560,6 +565,7 @@ async function writeDigest({ apiKey, config, state, auth, kind }) {
     const subject = (mm ? mm[1] : kind === 'weekly' ? '这周' : '这一年').trim().slice(0, 20);
     const body = humanize((mm ? mm[2] : out.text).trim(), kind === 'weekly' ? 700 : 900);
     if (!body) return false;
+    if (dry) { log(`[dry] 主题：${subject}\n[dry] 正文：${body}`); return true; }
     await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
     if (kind === 'weekly') state.lastWeeklyDay = today();
     else state.lastYearlyYear = new Date().getFullYear();
@@ -885,8 +891,9 @@ async function main() {
     process.exit(0);
   }
   if (args.includes('--proactive')) { await maybeProactive(apiKey, config, state, auth); console.log('主动来信已尝试，看日志'); process.exit(0); }
-  if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly' }) ? '周记已发' : '没写成'); process.exit(0); }
-  if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly' }) ? '年记已发' : '没写成'); process.exit(0); }
+  const dry = args.includes('--dry');
+  if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly', dry }) ? (dry ? '周记已生成（未发送）' : '周记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly', dry }) ? (dry ? '年记已生成（未发送）' : '年记已发') : '没写成'); process.exit(0); }
   if (args.includes('--once')) {
     const r = await tick(config, state, auth, apiKey);
     const n = await flushOutbox(config, state, auth);
