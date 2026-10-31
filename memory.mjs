@@ -162,6 +162,9 @@ function cosine(a, b, df, n) {
 
 /** 记一条。who: 'he' | 'me' */
 export function remember(who, text, at = Date.now()) {
+  // 防御：调用方把参数写反（remember(正文, 'he')）时自动纠正。
+  // 这个错真的发生过：条目里 who 变成一整段话，检索从此一条都命中不了。
+  if (text === 'he' || text === 'me') { const tmp = who; who = text; text = tmp; }
   const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 800);
   if (!clean) return;
   appendRaw(who, clean, at);
