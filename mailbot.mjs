@@ -28,7 +28,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import pkgMail from 'mailparser';
-import { remember, recall, memoryHint, memoryStats, tokenize } from './memory.mjs';
+import { remember, recall, memoryHint, memoryStats, tokenize, similarity } from './memory.mjs';
 
 const { simpleParser } = pkgMail;
 const DIR = path.dirname(fileURLToPath(import.meta.url));   // 凭据、状态、记忆都放在脚本旁边
@@ -192,7 +192,8 @@ export function templateKind(text) {
   const t = String(text || '').trim();
   if (t.length > 12) return '';
   if (/晚安|睡了|困了/.test(t)) return 'bye';
-  if (/吃了|吃饭|吃啥|吃什么/.test(t)) return 'askEat';
+  // "吃什么都行""随便"不是问吃了没，别被模板接走
+  if (/吃了|吃饭|吃啥|吃什么/.test(t) && !/都行|随便|什么都行|不知道/.test(t)) return 'askEat';
   if (/在吗|在不在|在么|人呢/.test(t)) return 'greet';
   if (/哈哈|笑死|hhh|233/i.test(t)) return 'haha';
   return '';
@@ -375,7 +376,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
         : `距上一封信 ${Math.round(gapMs / 86400000)} 天`;
 
   const rules = [];
-  if (mode === 'short') rules.push('这次只写一句，很短，十个字上下，别解释。');
+  if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}，你${sit.extra}。`);
@@ -385,6 +386,11 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
   rules.push('他一段话里可能说了好几件事，你只接最戳你的那一件，别的先不管。');
+  // 同一件事反复说：别再安慰，别再重复上次的说法
+  const prevBodies = (history || []).filter((h) => h.role === 'user').slice(-4).map((h) => String(h.text || ''));
+  if (prevBodies.some((p) => similarity(body, p) >= 0.5)) {
+    rules.push('这件事他已经说过好几遍了。别再安慰他，也别重复上次的说法——可以直接吐槽、点破他，或者干脆问别的。');
+  }
   if (Math.random() < 0.4) rules.push('可以拎他信里用过的一个词重复一下再反驳或追问，像真人抓字眼。');
   rules.push('别用他信里没有的数字、日期、金额、人名地名。');
   rules.push('记忆片段里的事只能照抄，不许给它补时间、补地点、补细节。');
@@ -401,7 +407,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   ];
   const out = await callModel(apiKey, msgs, mode === 'short' ? 90 : mode === 'long' ? 520 : 380);
   const { text, facts: raw } = splitMemory(out.text);
-  const cap = mode === 'short' ? 40 : mode === 'long' ? 320 : 220;
+  const cap = mode === 'short' ? 24 : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
   const allowed = [body, sit.weather, dateStr, gapStr, week, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
