@@ -59,14 +59,14 @@ const writeJson = (p, v) => { try { fs.mkdirSync(path.dirname(p), { recursive: t
 
 const STATE_BAK = path.join(DIR, 'state.bak.json');
 /** 状态写盘前先留一份备份：state.json 坏了还能回退 */
-function saveState(s) {
+export function saveState(s) {
   try {
     if (fs.existsSync(STATE)) fs.copyFileSync(STATE, STATE_BAK);
   } catch {}
   writeJson(STATE, s);
 }
 /** 读状态：主文件坏了就用备份 */
-function loadState(def) {
+export function loadState(def) {
   const main = readJson(STATE, null);
   if (main) return main;
   const bak = readJson(STATE_BAK, null);
@@ -91,7 +91,7 @@ async function alertOnce(code, text) {
   } catch {}
 }
 
-const keepAlive = setInterval(() => {}, 3600 * 1000);
+const keepAlive = process.env.MAILBOT_NO_MAIN ? null : setInterval(() => {}, 3600 * 1000);
 
 function decrypt(file) {
   if (process.platform !== 'win32') return '';   // DPAPI 只有 Windows 有
@@ -140,7 +140,7 @@ const decodeMime = (s) => String(s || '').replace(/=\?([^?]+)\?([BbQq])\?([^?]*)
 });
 const headerField = (t, n) => { const m = t.match(new RegExp(`^${n}:\\s*(.*(?:\\r?\\n[ \\t].*)*)`, 'im')); return m ? m[1].replace(/\r?\n[ \t]+/g, ' ').trim() : ''; };
 
-async function parseBody(raw, subject) {
+export async function parseBody(raw, subject) {
   try {
     const mail = await simpleParser(raw);
     let text = String(mail.text || '');
@@ -187,7 +187,7 @@ function pickTemplate(kind, state) {
   state.recentTemplates = recent.concat([pick]).slice(-3);   // 最近三句不重复
   return pick;
 }
-function templateKind(text) {
+export function templateKind(text) {
   const t = String(text || '').trim();
   if (t.length > 12) return '';
   if (/晚安|睡了|困了/.test(t)) return 'bye';
@@ -197,7 +197,7 @@ function templateKind(text) {
   return '';
 }
 const isNight = () => { const h = nowHour(); return h >= 23 || h < 8; };
-function nowHour() { return Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false })); }
+export function nowHour() { return Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false })); }
 
 async function callModel(apiKey, messages, maxTokens = 380, temperature = 1.25) {
   const r = await fetch('https://api.deepseek.com/chat/completions', {
@@ -219,7 +219,7 @@ function persona() {
   return '你是哥的妹妹，说话短、口语、别客套。';
 }
 
-function splitMemory(out) {
+export function splitMemory(out) {
   const facts = [];
   const kept = [];
   for (const l of String(out || '').split('\n')) {
@@ -231,7 +231,7 @@ function splitMemory(out) {
 }
 
 /** 事实入库前校验：必须能在他的原信里找到依据，否则是模型脑补的，丢掉 */
-function groundFacts(facts, body) {
+export function groundFacts(facts, body) {
   const bodySet = new Set(tokenize(body).filter((t) => t.length === 2));
   return facts.filter((f) => {
     const ts = [...new Set(tokenize(f).filter((t) => t.length === 2))];
@@ -251,7 +251,7 @@ function addFacts(state, facts) {
   return n;
 }
 
-function humanize(text, cap = 220) {
+export function humanize(text, cap = 220) {
   let s = String(text || '').trim();
   s = s.replace(/^#{1,6}\s*/gm, '').replace(/^\s*[-*•]\s+/gm, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`{1,3}/g, '');
   const BAD = [/希望(对你|能)有(所)?帮助/g, /有(什么|任何)(可以|需要)?(帮|需要)(助|的)?(吗|呢)?/g, /很(高兴|荣幸)(为您|为你)服务/g, /作为(一个)?AI/g, /总结一下/g, /首先[，,]?/g, /其次[，,]?/g, /最后[，,]?/g, /总之[，,]?/g];
@@ -266,7 +266,7 @@ function humanize(text, cap = 220) {
 
 /** 数字护栏：回复里的数字必须是上下文里出现过的，否则整句删掉 */
 function numbersIn(t) { return new Set(String(t || '').match(/\d+(?:\.\d+)?/g) || []); }
-function guardNumbers(reply, allowedText) {
+export function guardNumbers(reply, allowedText) {
   const allowed = numbersIn(allowedText);
   const parts = String(reply || '').split(/(?<=[。！？!?~])/).filter((x) => x.trim());
   if (!parts.length) return reply;
@@ -278,7 +278,7 @@ function guardNumbers(reply, allowedText) {
 }
 
 /** 情绪：从她自己写的话里认，不花钱 */
-function emotionOf(t) {
+export function emotionOf(t) {
   const s = String(t || '');
   if (/烦|讨厌|别烦|烦死|又来/.test(s)) return '有点烦';
   if (/心疼|可怜|辛苦|累|歇|别硬扛/.test(s)) return '心疼';
@@ -413,7 +413,7 @@ function addCost(state, usage) {
   return c;
 }
 
-function budget(state, config, bal) {
+export function budget(state, config, bal) {
   if (state.costDay === today() && Number(state.costToday || 0) >= Number(config.dailyCostCap || 0.05)) return '今日到预算上限';
   if (bal >= 0 && bal < 0.5) return '余额不足';
   if (bal >= 0 && bal < 1) return '余额偏低';
@@ -421,7 +421,7 @@ function budget(state, config, bal) {
 }
 
 /** 发信延迟：白天压到 30 分钟内（免得"现在"过期），深夜他醒着就快一点 */
-function sendDelayMs(templateUsed) {
+export function sendDelayMs(templateUsed) {
   if (templateUsed) return 20000 + Math.floor(Math.random() * 40000);
   const h = nowHour();
   if (h >= 23 || h < 8) return 60000 + Math.floor(Math.random() * 5 * 60000);   // 夜里 1~6 分钟
@@ -801,4 +801,4 @@ process.on('exit', (code) => log('进程退出 code=' + code));
 process.on('uncaughtException', (e) => { log('未捕获异常（继续跑）：' + (e && e.message ? e.message : e)); alertOnce('crash', '进程里出了个异常：' + (e && e.message ? e.message : String(e))); });
 process.on('unhandledRejection', (e) => log('未处理拒绝（继续跑）：' + (e && e.message ? e.message : e)));
 
-main().catch((e) => { log('启动失败：' + e.message); process.exit(1); });
+if (!process.env.MAILBOT_NO_MAIN) main().catch((e) => { log('启动失败：' + e.message); process.exit(1); });
