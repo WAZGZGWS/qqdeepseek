@@ -266,6 +266,22 @@ export function similarity(a, b) {
   return cosine(A, B, new Map(), 1);
 }
 
+/** 取最近 days 天的原文记录（新的在前，最多 limit 条），给"周记/年记"用 */
+export function recentRaw(days, limit = 200) {
+  let lines = [];
+  try { lines = fs.readFileSync(RAW, 'utf8').split('\n').filter(Boolean); } catch { return []; }
+  const since = Date.now() - days * 86400000;
+  const out = [];
+  for (let i = lines.length - 1; i >= 0 && out.length < limit; i -= 1) {
+    try {
+      const e = JSON.parse(lines[i]);
+      if (!e || !e.at || e.at < since || !e.text) continue;
+      out.push(e);
+    } catch {}
+  }
+  return out;
+}
+
 /** 给提示词用的一段"旧事背景"；没有相关记录就返回空串 */
 export function memoryHint(query, k = 4) {
   const hits = recall(query, k);
