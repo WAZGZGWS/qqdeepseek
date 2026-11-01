@@ -228,6 +228,15 @@ await t('陌生人来信计数：3 封提醒、10 封拉黑', () => {
   assert.strictEqual(bot.bumpStranger(st, 'x@example.com', 11000).shouldBlock, false, '拉黑后不再重复拉黑');
 });
 
+await t('她不会白天说"刚睡醒"，也不会一天说两次', () => {
+  const now = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  assert.ok(bot.allowedExtras({}, 7).includes('刚睡醒'), '早上七点应该能说刚睡醒');
+  assert.ok(!bot.allowedExtras({ me: { day: { date: now, wokeSaid: true } } }, 7).includes('刚睡醒'), '说过了就不该再说');
+  assert.ok(!bot.allowedExtras({}, 14).includes('刚睡醒'), '下午不该说刚睡醒');
+  assert.ok(!bot.allowedExtras({}, 14).includes('在等外卖'), '下午两点不该说在等外卖');
+  assert.ok(bot.allowedExtras({}, 22).includes('有点困'), '晚上十点应该是困了');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
