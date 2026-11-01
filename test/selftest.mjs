@@ -251,6 +251,20 @@ await t('时间打架的句子会被删掉', () => {
   assert.ok(bot.guardTime('晚安，睡吧。', 23).includes('晚安'), '深夜说晚安是合理的');
 });
 
+await t('不许编"我同事"这类来历，但"你同事"没问题', () => {
+  const out = bot.guardSelf('我同事昨天还说我不靠谱。今天天气不错。');
+  assert.ok(!out.includes('我同事'), '编的来历没删掉');
+  assert.ok(out.includes('今天天气不错'), '无辜的句子被删了');
+  assert.ok(bot.guardSelf('你同事真烦。').includes('你同事'), '第二人称不该被删');
+});
+
+await t('固定档案会进提示词', () => {
+  const block = bot.selfBlock({ birthday: '6-17', likes: ['辣'], dislikes: ['被叫大肥鱼'], habits: ['睡前刷手机'] });
+  assert.ok(block.includes('6 月 17 日'));
+  assert.ok(block.includes('辣'));
+  assert.ok(block.includes('被叫大肥鱼'));
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
