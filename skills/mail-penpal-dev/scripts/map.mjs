@@ -1,4 +1,4 @@
-﻿/**
+/**
  * map.mjs —— 生成 mailbot 的函数地图，让 agent 不用整文件读。
  * 用法：node map.mjs            （写到 skill 目录的 MAP.md）
  *       node map.mjs --print    （只打印）
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC = process.argv.slice(2).find((a) => !a.startsWith('--')) || 'E:/1/qq-stack/mailbot';   // 也可传入源码目录
+const SRC = process.argv.slice(2).find((a) => !a.startsWith('--')) || process.env.MAILBOT_DIR || 'mailbot';   // 也可传入源码目录
 const FILES = ['mailbot.mjs', 'memory.mjs'];
 
 function docAbove(lines, i) {
