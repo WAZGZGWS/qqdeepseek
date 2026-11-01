@@ -6,6 +6,8 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
+> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+
 # mail-penpal-dev（改她的代码时用）
 
 目标是**不整文件读、不瞎试、一次改对**。mailbot.mjs 已经 1300+ 行，整读一次约 2 万 token，读完还没定位到要改的地方。
@@ -20,7 +22,7 @@ user-invocable: true
 
 ```powershell
 # 0. 定位
-Get-Content C:\Users\ZhuanZ1\.dsh\skills\mail-penpal-dev\MAP.md -TotalCount 60
+Get-Content %USERPROFILE%\.dsh\skills\mail-penpal-dev\MAP.md -TotalCount 60
 
 # 1. 看目标区域（只读 40 行）
 #    read E:\1\qq-stack\mailbot\mailbot.mjs offset=<行号> limit=40
