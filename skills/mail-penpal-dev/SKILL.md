@@ -6,7 +6,7 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
-> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+> 文中的 <工作区>\... 是路径示例，换成你自己项目的目录即可。
 
 # mail-penpal-dev（改她的代码时用）
 
@@ -25,26 +25,26 @@ user-invocable: true
 Get-Content %USERPROFILE%\.dsh\skills\mail-penpal-dev\MAP.md -TotalCount 60
 
 # 1. 看目标区域（只读 40 行）
-#    read E:\1\qq-stack\mailbot\mailbot.mjs offset=<行号> limit=40
+#    read <mailbot 目录>\mailbot.mjs offset=<行号> limit=40
 
-# 2. 写补丁（放 E:\1\patch-xxx.mjs，别放仓库目录）
+# 2. 写补丁（放 <工作区>\patch-xxx.mjs，别放仓库目录）
 #    模板见下面
 
 # 3. 应用 + 语法检查
-cd E:\1; node patch-xxx.mjs
-cd E:\1\qq-stack\mailbot; node --check mailbot.mjs
+cd <工作区>; node patch-xxx.mjs
+cd <mailbot 目录>; node --check mailbot.mjs
 
 # 4. 跑自测（42 项，不连网、不花钱）
-cd E:\1\mail-penpal; node test/selftest.mjs
+cd <仓库副本>; node test/selftest.mjs
 
 # 5. 同步脱敏副本（锚点失效会报 MISS，那就顺手更新 repo-sync.mjs）
-cd E:\1; node repo-sync.mjs
+cd <工作区>; node repo-sync.mjs
 
 # 6. 隐藏重启（不要用 cmd 起，会闪黑框）
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'mailbot.mjs' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-Remove-Item E:\1\qq-stack\mailbot\lock -ErrorAction SilentlyContinue
-Start-Process wscript.exe -ArgumentList 'E:\1\qq-stack\mailbot\run-mailbot.vbs'
-Start-Sleep 8; Get-Content E:\1\qq-stack\mailbot\mailbot.log -Tail 3 -Encoding UTF8
+Remove-Item <mailbot 目录>\lock -ErrorAction SilentlyContinue
+Start-Process wscript.exe -ArgumentList '<mailbot 目录>\run-mailbot.vbs'
+Start-Sleep 8; Get-Content <mailbot 目录>\mailbot.log -Tail 3 -Encoding UTF8
 
 # 7. 推仓库（要用户给 token；推完提醒他删）
 ```
@@ -88,9 +88,9 @@ console.log('已更新');
 | `.cmd` 写中文注释 | cmd 窗口显示乱码 | 注释用英文 |
 | 手动起第二个实例 | 两个进程抢同一信箱、重复回信 | 只通过 `run-mailbot.vbs` 或计划任务起 |
 | `--status` 报“已有实例” | 单实例锁在生效，不是 bug | 先停服务再跑命令 |
-| repo-sync 报 MISS | 它按固定原文匹配，改了锚点就失配 | 更新 `E:\1\repo-sync.mjs` 里的 from 串 |
+| repo-sync 报 MISS | 它按固定原文匹配，改了锚点就失配 | 更新 `<工作区>\repo-sync.mjs` 里的 from 串 |
 | 仓库推不上去 | 这台机器连不上 github.com:443 | 走 GitHub API + 用户给 token |
-| 火绒弹窗 | 脚本执行被问 | 让用户把 `E:\1\qq-stack\mailbot` 加信任区 |
+| 火绒弹窗 | 脚本执行被问 | 让用户把 `<mailbot 目录>` 加信任区 |
 | 日志读成乱码 | 文件是 UTF-8，不是 ANSI | `Get-Content -Encoding UTF8` |
 
 ## 省 token 的账
