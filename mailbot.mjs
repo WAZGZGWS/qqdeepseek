@@ -438,6 +438,11 @@ async function askModel({ apiKey, history, body, facts, state }) {
         : `距上一封信 ${Math.round(gapMs / 86400000)} 天`;
 
   const rules = [];
+  {
+    const sb = selfBlock(state && state.me);
+    if (sb) rules.push(sb);
+    rules.push('说到"你自己"时，只能从上面这些、以及今天的真实状态里挑。别编同事、朋友、亲戚、宠物这类来历；被问就说"没什么好说的"。');
+  }
   if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
@@ -502,6 +507,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const allowed = [body, sit.weather, dateStr, gapStr, week, selfNums, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
   reply = guardTime(reply, nowHour());   // 早上别道晚安，深夜别问早安
+  reply = guardSelf(reply);              // 不许编"我同事"这类来历
   return { reply, facts: raw, usage, mode, sit };
 }
 
@@ -528,6 +534,36 @@ function addCost(state, usage) {
 }
 
 /** 按真实钟点给她一份"现在该干嘛"的说明 */
+/** 她固定的"自己"：写在这里的才许说，别的一律不编 */
+export const SELF_DEFAULTS = {
+  likes: ['辣', '下雨天', '半夜刷手机'],
+  dislikes: ['被叫大肥鱼', '别人熬夜', '听到"随便"'],
+  habits: ['爱把头发扎起来', '睡前刷手机', '吃饭挑食，先吃菜'],
+};
+
+/** 不许她编"我同事/我朋友"这类来历（第二人称照常，说"你同事"没问题） */
+export function guardSelf(reply) {
+  const banned = ['我同事', '我朋友', '我同学', '我闺蜜', '我室友', '我老板', '我领导', '我男朋友', '我女朋友', '我家猫', '我家狗', '我宠物', '我亲戚', '我表哥', '我堂哥'];
+  const parts = String(reply || '').split(/(?<=[。！？!?~])/).filter((x) => x.trim());
+  if (!parts.length) return reply;
+  const kept = parts.filter((x) => !banned.some((b) => x.includes(b)));
+  return kept.join('').trim();
+}
+
+/** 把档案拼成提示词用的一段 */
+export function selfBlock(me) {
+  const m = me || {};
+  const line = (label, arr) => (Array.isArray(arr) && arr.length ? `- ${label}：${arr.join('、')}` : '');
+  const rows = [
+    m.birthday ? `- 生日：${m.birthday.split('-')[0]} 月 ${m.birthday.split('-')[1]} 日` : '',
+    line('喜欢', m.likes),
+    line('受不了', m.dislikes),
+    line('小习惯', m.habits),
+  ].filter(Boolean);
+  if (!rows.length) return '';
+  return ['# 关于你自己（固定的，不许改口）', ...rows].join('\n');
+}
+
 export function timePolicy(h = nowHour()) {
   if (h >= 5 && h < 9) return { slot: '早上', ok: '刚醒、洗漱、早饭、今天要干嘛', avoid: '晚安、早点睡、该睡了' };
   if (h >= 9 && h < 11) return { slot: '上午', ok: '上班、路上、正经事', avoid: '晚安、早点睡、刚睡醒' };
@@ -948,6 +984,11 @@ async function main() {
     process.exit(1);
   }
   const state = loadState({ history: [], seen: [], facts: [], count: 0, day: '' });
+  state.me = state.me || {};
+  if (!Array.isArray(state.me.likes)) state.me.likes = SELF_DEFAULTS.likes.slice();
+  if (!Array.isArray(state.me.dislikes)) state.me.dislikes = SELF_DEFAULTS.dislikes.slice();
+  if (!Array.isArray(state.me.habits)) state.me.habits = SELF_DEFAULTS.habits.slice();
+  saveState(state);   // 立刻落盘，别只在内存里
   MAIL_USER = String(config.email || process.env.MAILBOT_EMAIL || MAIL_USER).trim();
   const tryDat = (f) => { try { return fs.existsSync(f) ? decrypt(f) : ''; } catch { return ''; } };
   const auth = String(config.authCode || process.env.MAILBOT_AUTH || tryDat(path.join(DIR, 'mail-auth.dat'))).trim();
