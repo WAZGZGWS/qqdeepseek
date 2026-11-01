@@ -218,7 +218,7 @@ export function recall(query, k = 4, opts = {}) {
   const { minScore = 0, excludeRecentMs = 6 * 3600 * 1000 } = opts;   // 0 = 自动按最高分取
   const { entries, df, avgdl } = load();
   if (!entries.length) return [];
-  const qTokens = [...new Set(tokenize(query))].slice(0, 60);
+  const qTokens = [...new Set(tokenize(query).concat(expandQuery(query)))].slice(0, 80);
   if (!qTokens.length) return [];
   const n = entries.length;
   const now = Date.now();
@@ -256,6 +256,29 @@ export function recall(query, k = 4, opts = {}) {
     if (picked.length >= k) break;
   }
   return picked;
+}
+
+/** 口语里经常换着说的词：检索时互相带上，减少"换个说法就断片" */
+const SYNONYMS = [
+  ['加班', '熬夜', '忙', '累'],
+  ['吃', '饭', '饿', '外卖', '早饭', '晚饭'],
+  ['困', '睡', '瞌睡', '想睡'],
+  ['烦', '气', '崩溃', '受不了'],
+  ['开心', '高兴', '笑', '乐'],
+  ['工资', '钱', '房租', '穷', '涨薪'],
+  ['工作', '上班', '公司', '领导', '项目'],
+  ['病', '不舒服', '头疼', '感冒', '医院'],
+];
+
+/** 把查询里出现的词，扩成同义的一组 */
+export function expandQuery(text) {
+  const t = String(text || '');
+  const extra = [];
+  for (const group of SYNONYMS) {
+    // 只用两个字以上的词去匹配：否则"天气"会因为含"气"被当成"烦"
+    if (group.some((w) => w.length >= 2 && t.includes(w))) extra.push(...group);
+  }
+  return extra;
 }
 
 /** 两句话题的相似度（0~1）：判断"他是不是又在说同一件事" */
@@ -298,6 +321,52 @@ export function memoryHint(query, k = 4) {
     '只在自然的时候顺口带一句（比如他说"还是老样子"你能接上），别硬扯、别复述、别说"我记得你上次说过"。',
     ...lines,
   ].join('\n');
+}
+
+/** 列出所有记忆（带序号，给 --memory 用） */
+export function listEntries() {
+  const { entries } = load();
+  return entries.map((e, i) => ({ no: i + 1, at: e.at, who: e.who, weight: e.weight || 1, text: e.text }));
+}
+
+/** 删掉第 n 条（1 开始） */
+export function removeEntry(no) {
+  const { entries } = load();
+  const idx = Number(no) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= entries.length) return false;
+  entries.splice(idx, 1);
+  rewrite(entries);
+  return true;
+}
+
+/** 清空记忆库（索引 + 原文） */
+export function clearAll() {
+  try { fs.unlinkSync(FILE); } catch {}
+  try { fs.unlinkSync(RAW); } catch {}
+  cache.mtime = -1;
+}
+
+/** 导出一份人能读的 memory.md */
+export function exportMarkdown(file) {
+  const { entries } = load();
+  const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const lines = ['# 她记得的事', '', `导出时间：${fmt(Date.now())}　共 ${entries.length} 条`, ''];
+  for (const e of entries.slice().reverse()) {
+    lines.push(`- **${fmt(e.at)}**（${e.who === 'he' ? '你说的' : '她说的'}，${e.weight || 1} 次）：${e.text}`);
+  }
+  let raw = '';
+  try { raw = fs.readFileSync(RAW, 'utf8'); } catch {}
+  if (raw) {
+    lines.push('', '---', '', '# 原文档案（更完整，检索不直接用）', '');
+    for (const line of raw.trim().split('\n').slice(-200)) {
+      try {
+        const o = JSON.parse(line);
+        lines.push(`- ${fmt(o.at)}（${o.who === 'he' ? '你说的' : '她说的'}）：${o.text}`);
+      } catch {}
+    }
+  }
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  return entries.length;
 }
 
 /** 统计，给 --status 看 */
