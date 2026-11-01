@@ -182,6 +182,8 @@ const TEMPLATES = {
   askEat: ['吃了，你呢？别又糊弄一顿。', '刚吃完，你吃没吃？', '还没呢，等你一起啊。', '吃了，别惦记我，你自己吃没吃。'],
   haha: ['笑什么笑，说人话。', '乐啥呢你。', '哼，有什么好笑的。', '你笑点真低。', '行行行，你赢了，别笑了。'],
   fallback: ['在呢，你说。', '嗯？', '怎么啦。', '你说。', '嗯，然后呢。', '怎么了这是。'],
+  // 没钱 / 额度用尽的收尾：不是不理他，是把话留到明天
+  outOfCredit: ['今天先到这儿吧，我这边没钱了，明天聊。', '我钱包空了，说不动话……明天聊哥。', '到这儿吧，明天再聊。'],
 };
 function pickTemplate(kind, state) {
   const arr = TEMPLATES[kind] || TEMPLATES.fallback;
@@ -966,14 +968,29 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   let sit = { extra: '', weather: '' };
 
   if (kind || nightTpl || why) {
-    text = pickTemplate(kind || (nightTpl ? 'night' : 'fallback'), state);
+    // 真没钱（余额 < 0.05 元）或今天额度用完了，才说「明天聊」；
+    // "余额偏低"（<1 元，其实还能聊几百封）别吓他，照旧用普通模板。
+    const broke = why && (why === '今日到预算上限' || (Number.isFinite(bal) && bal >= 0 && bal < 0.05));
+    const tpl = kind || (nightTpl ? 'night' : (broke ? 'outOfCredit' : 'fallback'));
+    text = pickTemplate(tpl, state);
     log(`用模板回（${kind || (nightTpl ? '深夜短句' : why)}）：${text}`);
   } else {
-    const out = await askModel({ apiKey, history: state.history || [], body, facts: state.facts || [], state });
-    text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
-    if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
-    const cost = addCost(state, usage);
-    log(`这封约 ${cost.toFixed(5)} 元（${mode}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
+    try {
+      const out = await askModel({ apiKey, history: state.history || [], body, facts: state.facts || [], state });
+      text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
+      if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
+      const cost = addCost(state, usage);
+      log(`这封约 ${cost.toFixed(5)} 元（${mode}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      // 不是欠费就照常抛给外层，别把网络抖一下当成没钱
+      if (!/balance|余额|402|insufficient|payment|quota/i.test(msg)) throw e;
+      state.noMoney = true;
+      log('模型回话失败（余额）：' + msg + '，这封改成「明天聊」');
+      text = pickTemplate('outOfCredit', state);
+      mode = 'no-money';
+      await alertOnce('nomoney', '她这边额度见底了，模型不再回话。\n\n报错：' + msg + '\n\n充值：https://platform.deepseek.com/\n\n充好之后她会自己接着说，不用重启。这封大概就是今天最后一句像样的话了——明天聊。', 12 * 3600 * 1000);
+    }
   }
   if (!text) { log('没生成内容，跳过'); return false; }
 
@@ -1020,12 +1037,13 @@ async function tick(config, state, auth, apiKey) {
   const LOW = 2;
   const REARM = 3;
   if (bal >= REARM && state.lowWarned) { state.lowWarned = false; saveState(state); }
+  if (bal >= 1 && state.noMoney) { state.noMoney = false; saveState(state); log('余额回来了，她能正常说话了'); }
   if (bal >= 0 && bal < LOW && !state.lowWarned && config.owner) {
     state.lowWarned = true;
     state.balanceWarnDay = today();
     saveState(state);
     try {
-      await sendMail({ to: config.owner, subject: `（提醒）我这边余额只剩 ${bal.toFixed(2)} 元`, text: `还剩 ${bal.toFixed(2)} 元。充值前我只能用几句现成的话应付你，不是我不想说话。\n\n充值：https://platform.deepseek.com/ （登录后点右上角余额）\n\n充完就不会再提了。`, auth });
+      await sendMail({ to: config.owner, subject: `（提醒）我这边余额只剩 ${bal.toFixed(2)} 元`, text: `还剩 ${bal.toFixed(2)} 元。再聊几封我就只能用几句现成的话应付你了，不是我不想说话。\n\n充值：https://platform.deepseek.com/ （登录后点右上角余额）\n\n充完就不会再提了；没充的话，最后一封我会跟你说「明天聊」。`, auth });
       log('余额提醒已发（' + bal.toFixed(2) + ' 元）');
     } catch (e) { log('余额提醒没发出去：' + e.message); }
     popupTopUp(bal);
