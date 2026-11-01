@@ -325,6 +325,22 @@ await t('同一件事最多追问两次', () => {
   assert.strictEqual(bot.pickLoop(st, '今天好累'), null, '问过两次就不再提');
 });
 
+await t('事实审计：没依据的、模棱两可的会被清掉', () => {
+  assert.strictEqual(bot.supports('最近总加班', '天天加班到半夜'), true, '短事实一个词就够');
+  assert.strictEqual(bot.supports('他喜欢打羽毛球', '今天加班到半夜'), false, '没依据应判 false');
+  const st = {
+    facts: [
+      { text: '最近总加班', src: '天天加班到半夜，晚饭都没吃' },
+      { text: '他好像喜欢猫', src: '今天加班到半夜' },
+      { text: '他住在杭州', src: '今天加班到半夜' },
+    ],
+  };
+  const r = bot.auditFacts(st);
+  assert.strictEqual(r.kept, 1, '只该留下有依据的那条');
+  assert.strictEqual(r.dropped.length, 2);
+  assert.ok(st.factsDropped.length === 2, '清掉的要留档');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
