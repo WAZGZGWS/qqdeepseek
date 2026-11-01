@@ -1,5 +1,12 @@
 {
   "email": "you@example.com",
+  "mail": {
+    "imapHost": "imap.qq.com",
+    "imapPort": 993,
+    "smtpHost": "smtp.qq.com",
+    "smtpPort": 465,
+    "user": "you@example.com"
+  },
   "authCode": "邮箱授权码（不是登录密码；QQ 邮箱在 设置→账户 里开 IMAP 后拿到）",
   "apiKey": "sk-你的 DeepSeek key",
   "owner": "你的邮箱@example.com",
