@@ -588,6 +588,13 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const sleepy = nowHour() >= 2 && nowHour() < 5 && String(body || '').length <= 40;   // 凌晨迷糊，但你写长了照常回
   const mode = sleepy ? 'short' : lengthMode();
   const ban = bannedParticles(state);
+  // 自适应温度：正经/难受的时候压低（少编），玩笑的时候抬高（活得起来），凌晨收着点
+  const heavyMail = /(累|难受|崩溃|撑不住|哭|病|疼|委屈|吵架|分手|医院|失业|辞职|压力)/.test(String(body || ''));
+  const playfulMail = /(哈哈|笑死|hhh|233|嘿嘿|笨蛋|傻)/i.test(String(body || ''));
+  let temp = 1.25;
+  if (heavyMail) temp = 1.05;
+  else if (playfulMail) temp = 1.35;
+  if (sleepy) temp = Math.min(temp, 1.15);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
   const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 6);
   // 时段只认 timePolicy 一个口径：原来这里另算一套边界，5 点会同时出现"半夜"和"早上"
@@ -680,7 +687,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   ];
   // short 也要装得下「正文 + #记忆 行」：160 不够，正文写满就把记忆行挤掉了
   const budget = mode === 'short' ? 240 : mode === 'long' ? 520 : 380;
-  let out = await callModel(apiKey, msgs, budget);
+  let out = await callModel(apiKey, msgs, budget, temp);
   let parsed0 = splitSelf(out.text);
   let parsed = splitMemory(parsed0.text);
   if (parsed0.self.birthday && state && (!state.me || !state.me.birthday)) {
@@ -696,7 +703,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
       ...msgs,
       { role: 'assistant', content: out.text || '（空）' },   // 补上他刚才那条，不然上下文里没有「刚才那条」
       { role: 'user', content: '刚才那条只有记忆行没有正文。这次只写回信，不要写记忆行。' },
-    ], Math.max(budget, 240));
+    ], Math.max(budget, 240), temp);
     parsed = splitMemory(splitSelf(again.text).text);   // 重试也要认「#我: 生日」，别把它丢了
     usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
   }
@@ -720,7 +727,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
       log(`可能跑题：他说「${String(body).slice(0, 18)}」她回「${String(reply).slice(0, 18)}」`);
     }
   } catch {}
-  return { reply, facts: raw, usage, mode, sit };
+  return { reply, facts: raw, usage, mode, sit, temp };
 }
 
 let balCache = { at: 0, val: -1 };
@@ -1008,7 +1015,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
       text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
       if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
       const cost = addCost(state, usage);
-      log(`这封约 ${cost.toFixed(5)} 元（${mode}，in ${usage?.prompt_tokens || 0} / out ${usage?.completion_tokens || 0}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
+      log(`这封约 ${cost.toFixed(5)} 元（${mode}，温度 ${out.temp ?? '-'}，in ${usage?.prompt_tokens || 0} / out ${usage?.completion_tokens || 0}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
     } catch (e) {
       const msg = String((e && e.message) || e);
       // 不是欠费就照常抛给外层，别把网络抖一下当成没钱
