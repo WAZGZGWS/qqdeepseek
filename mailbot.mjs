@@ -44,7 +44,7 @@ let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 email �
 const IMAP = { host: 'imap.qq.com', port: 993 };
 const SMTP = { host: 'smtp.qq.com', port: 465 };
 const POLL_MS = 100 * 1000;   // 正常轮询间隔；失败会退避，最长 10 分钟
-const MAX_HISTORY = 12;   // 她的信短，多四条约 80 字，换来"我记得自己说过"
+const MAX_HISTORY = 10;   // 折中：8 条时她容易"我啥时候说过"，12 条每封多烧 80 字
 const MAX_INCOMING = 1200;
 let TZ = 'Asia/Shanghai';   // 由 config.json 的 timezone 覆盖
 const PARTICLE_LIST = ['诶', '呢', '啦', '呗', '哼', '嘛'];
@@ -183,6 +183,12 @@ const TEMPLATES = {
   bye: ['晚安，睡吧。', '去睡吧，明天见。', '嗯，晚安哥。', '睡吧睡吧，我也困了。', '晚安，做个好梦。'],
   askEat: ['吃了，你呢？别又糊弄一顿。', '刚吃完，你吃没吃？', '还没呢，等你一起啊。', '吃了，别惦记我，你自己吃没吃。'],
   haha: ['笑什么笑，说人话。', '乐啥呢你。', '哼，有什么好笑的。', '你笑点真低。', '行行行，你赢了，别笑了。'],
+  // 早上打招呼：短、像她，不客服腔
+  morning: ['早啊哥。', '这么早就醒了？', '早，我刚醒，眼睛还没睁开。', '早，今天起得比你还早。', '早啊，饭吃了没。'],
+  // "在干嘛 / 忙吗"：别回"在呢"，得说自己在干嘛
+  askWhat: ['没干嘛，躺着呢。', '在发呆，你说。', '刚想找你说话。', '忙着呢，但可以听你说。', '也没什么，就等你说点有意思的。'],
+  // 他说想她
+  miss: ['想了，哪能不想。', '嗯？这会儿才想起来说。', '哼，嘴上说说吧。', '想我就多说两句。'],
   fallback: ['在呢，你说。', '嗯？', '怎么啦。', '你说。', '嗯，然后呢。', '怎么了这是。'],
   // 没钱 / 额度用尽的收尾：不是不理他，是把话留到明天
   outOfCredit: ['没钱了，今天只能到这儿。明天聊哥。', '我这边见底了，说不动话……明天聊。', '行吧，今天就到这儿，明天聊。'],
@@ -200,9 +206,14 @@ function pickTemplate(kind, state) {
 export function templateKind(text) {
   const t = String(text || '').trim();
   if (t.length > 12) return '';
-  if (/晚安|睡了|困了/.test(t)) return 'bye';
-  // "吃什么都行""随便"不是问吃了没，别被模板接走
-  if (/吃了|吃饭|吃啥|吃什么/.test(t) && !/都行|随便|什么都行|不知道/.test(t)) return 'askEat';
+  if (/晚安|睡了|困了|早点睡|早点休息/.test(t)) return 'bye';
+  // "吃什么都行""随便"不是问吃了没，别被模板接走；
+  // 而且必须是"问句"（吃了吗/吃了没/吃什么），他说"吃饭了，有糖醋排骨"不是在问我
+  if (/(吃|饭)[^。！？]{0,5}(吗|没|么)|吃啥|吃什么|吃了没|吃了吗/.test(t) && !/都行|随便|什么都行|不知道/.test(t)) return 'askEat';
+  // 早上：必须从"早"开头，免得"早点睡"被当成打招呼
+  if (/^(早|早安|早上好|早啊|醒了|起了|起床)/.test(t)) return 'morning';
+  if (/想你|想我|想没想|惦记/.test(t)) return 'miss';
+  if (/在干嘛|干嘛呢|在忙|忙吗|忙不忙|干啥呢/.test(t)) return 'askWhat';
   if (/在吗|在不在|在么|人呢/.test(t)) return 'greet';
   if (/哈哈|笑死|hhh|233/i.test(t)) return 'haha';
   return '';
