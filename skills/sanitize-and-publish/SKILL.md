@@ -6,7 +6,7 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
-> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+> 文中的 <工作区>\... 是路径示例，换成你自己项目的目录即可。
 
 # sanitize-and-publish（脱敏发布）
 
@@ -15,7 +15,7 @@ user-invocable: true
 ## 第 1 步：扫描
 
 ```powershell
-node %USERPROFILE%\.dsh\skills\sanitize-and-publish\scripts\scan.mjs E:\1\你的项目
+node %USERPROFILE%\.dsh\skills\sanitize-and-publish\scripts\scan.mjs <工作区>\你的项目
 ```
 
 查：模型 key、GitHub token、云 key、疑似密码、邮箱、本机绝对路径、内网地址、手机号、身份证。
@@ -26,7 +26,7 @@ node %USERPROFILE%\.dsh\skills\sanitize-and-publish\scripts\scan.mjs E:\1\你的
 |---|---|---|
 | 真凭据 | `sk-...`、`ghp_...`、`authCode=...` | 必须删/换占位符，不能只改注释 |
 | 个人信息 | 邮箱、手机号、QQ 号、用户名 | 删或换 `you@example.com` |
-| 本机路径 | `E:\1\...`、`C:\Users\姓名\...` | 能改相对路径就改；改不了就在 README 注明“路径按本机布局” |
+| 本机路径 | `<工作区>\...`、`%USERPROFILE%\...` | 能改相对路径就改；改不了就在 README 注明“路径按本机布局” |
 
 ## 第 2 步：脱敏
 
@@ -44,7 +44,7 @@ node %USERPROFILE%\.dsh\skills\sanitize-and-publish\scripts\scan.mjs E:\1\你的
 ```powershell
 $env:GITHUB_TOKEN = "ghp_用户给你的"
 node %USERPROFILE%\.dsh\skills\sanitize-and-publish\scripts\push.mjs `
-  --repo 用户名/仓库名 --dir E:\1\你的项目 --files README.md,src/a.mjs --message "初次上传"
+  --repo 用户名/仓库名 --dir <工作区>\你的项目 --files README.md,src/a.mjs --message "初次上传"
 ```
 
 - 已存在的文件会自动取 `sha` 更新，新文件直接创建
@@ -67,11 +67,11 @@ token 一旦贴进对话就已经算泄露，推完就该删。如果他没删�
 
 | 步骤 | 做法 |
 |---|---|
-| 副本 | `E:\1\mail-penpal`（生产在 `E:\1\qq-stack\mailbot`）|
-| 同步 | `node E:\1\repo-sync.mjs`：替换路径/邮箱/key/用户名，MISS 就不写文件 |
+| 副本 | `<仓库副本>`（生产在 `<mailbot 目录>`）|
+| 同步 | `node <工作区>\repo-sync.mjs`：替换路径/邮箱/key/用户名，MISS 就不写文件 |
 | 扫描 | `scan.mjs` + 一次“远端文件逐个拉回再扫” |
 | 推送 | `push.mjs`，一次推一批 |
-| 教训 | 有两次差点把 `E:\1` 路径和示例邮箱写进仓库，都是扫描抓出来的 |
+| 教训 | 有两次差点把 `<工作区>` 路径和示例邮箱写进仓库，都是扫描抓出来的 |
 
 ## 别做的事
 
