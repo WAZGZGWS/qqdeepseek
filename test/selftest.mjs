@@ -142,6 +142,15 @@ await t('非模板 1~30 分钟', () => {
   }
 });
 
+await t('节奏可调：instant 2~8 秒、fast 20~90 秒', () => {
+  for (let i = 0; i < 50; i += 1) {
+    const a = bot.sendDelayMs(false, 'instant');
+    assert.ok(a >= 2000 && a <= 8000, `instant 越界：${a}`);
+    const b = bot.sendDelayMs(false, 'fast');
+    assert.ok(b >= 20000 && b <= 90000, `fast 越界：${b}`);
+  }
+});
+
 console.log('\n[8] 花费闸门');
 await t('余额太低降级', () => {
   assert.strictEqual(bot.budget({ costToday: 0, costDay: '' }, { dailyCostCap: 0.05 }, 0.3), '余额不足');
