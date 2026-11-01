@@ -301,6 +301,22 @@ await t('记忆面板：能列、能删、能清空', () => {
   assert.strictEqual(mem.listEntries().length, 0, '清空后应该为空');
 });
 
+await t('能看出"悬着的事"，回应过就自动关掉', () => {
+  const loops1 = bot.extractLoops('周末想去爬山，看天气吧');
+  assert.ok(loops1.length >= 1, '应该识别出未结的话');
+  const st = { openLoops: [] };
+  bot.recordLoops(st, '周末想去爬山，看天气吧');
+  assert.strictEqual(st.openLoops.length, 1, '应该记下一条');
+  bot.recordLoops(st, '周末爬山我去过了，挺累的');
+  assert.strictEqual(st.openLoops.length, 0, '他回答了就该关掉');
+});
+
+await t('认识天数按第一次通信算', () => {
+  const st = { firstSeen: Date.now() - 9 * 86400000 };
+  assert.strictEqual(bot.daysTogether(st), 10);
+  assert.strictEqual(bot.daysTogether({}), 0);
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
