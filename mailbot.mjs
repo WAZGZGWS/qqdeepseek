@@ -58,7 +58,7 @@ const log = (m) => { rotateLog(); const l = `[${new Date().toLocaleString('zh-CN
 const readJson = (p, d) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
 const writeJson = (p, v) => {
   // 先写 .tmp 再改名：断电/崩溃时要么旧版要么新版，不会留下半截 JSON
-  try { fs.mkdirSync(path.dirname(p), { recursive: true }); const t = p + '.tmp'; fs.writeFileSync(t, JSON.stringify(v, null, 2)); fs.renameSync(t, p); } catch {}
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); const t = p + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 7) + '.tmp'; fs.writeFileSync(t, JSON.stringify(v, null, 2)); fs.renameSync(t, p); } catch {}
 };
 
 const STATE_BAK = path.join(DIR, 'state.bak.json');
@@ -879,56 +879,91 @@ async function flushOutbox(config, state, auth) {
 
 /** 周记 / 年记：从原文档案里翻这段时间的记录，写一封回顾 */
 async function writeDigest({ apiKey, config, state, auth, kind, dry = false }) {
-  const days = kind === 'weekly' ? 7 : 365;
-  const rows = recentRaw(days, kind === 'weekly' ? 120 : 300);
-  if (!rows.length) { log(kind === 'weekly' ? '这周没聊过什么，不写周记' : '这一年没什么记录，不写年记'); return false; }
+  const cfg = config.summary || {};
+  const isHisBday = kind === 'birthday';
+  const isHerBday = kind === 'herBirthday';
+  const days = kind === 'yearly' ? 365 : kind === 'monthly' ? 31 : 1;
+  const rows = recentRaw(days, kind === 'yearly' ? 300 : 160);
+  if (!rows.length && !isHisBday && !isHerBday) { log('没有记录，这次不写回顾'); return false; }
   const lines = rows.slice().reverse().map((e) => {
     const d = new Date(e.at);
     const md = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return `${md} ${e.who === 'he' ? '哥' : '我'}：${String(e.text).slice(0, 80)}`;
+    return `${md} ${e.who === 'he' ? '哥' : '我'}：${String(e.text).slice(0, 60)}`;
   }).join('\n');
   const facts = (state.facts || []).slice(-20).map((f) => '- ' + f.text).join('\n');
-  const what = kind === 'weekly' ? '这周' : '这一年';
-  // 让她自己选写法，别每周都一个模板味
-  const styles = kind === 'weekly'
-    ? ['像唠嗑一样，挑两三件你想说的说，别的略过', '带点吐槽，把这周他让你无语的地方也写进去', '像记在备忘录里的，短句为主，可以没头没尾', '只讲一件这周你最记得的事，其它不提']
-    : ['按季节过一遍，只写你记得最清楚的那些', '像给一年做个了断，带点感慨但别煽情', '挑三件今年最想说的事，其余略过', '当成写给自己看的，顺手也给他一份'];
-  const style = styles[Math.floor(Math.random() * styles.length)];
-  const msg = `下面是${what}你们写信的记录（新的在上）：\n\n${lines}\n${facts ? '\n你记得关于哥的事：\n' + facts + '\n' : ''}\n写一封${kind === 'weekly' ? '周记' : '年度总结'}给他：用你平时的口吻，150~300 字，说说${what}他过得怎么样、你记着的几件事、你自己的感受。只写记录里有的，不许编。\n风格：${style}。\n别写成报告：不要分条列举，不要"本周总结""年度回顾"这种标题，不要开头写"这周你……"的排比。主题名你自己起，越随意越好。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
+
+  // 五种回顾共用一套逻辑，只是长度、语气候选、题头不同
+  const spec = kind === 'yearly'
+    ? { what: '这一年', title: '年记', chars: '120~180 字', tokens: 550, cap: 450,
+        styles: ['按季节过一遍，只写你记得最清楚的那几件', '像给一年做个了断，带点感慨但别煽情', '挑三件今年最想说的事，其余略过'] }
+    : kind === 'monthly'
+      ? { what: '这个月', title: '月记', chars: '80~120 字', tokens: 400, cap: 300,
+          styles: ['挑两件事说说，别的略过', '带点吐槽，把他这个月让你无语的地方写进去', '只讲一件这个月你最记得的事，其它不提'] }
+      : isHisBday
+        ? { what: '生日', title: '生日贺报', chars: '50~90 字', tokens: 350, cap: 260,
+            styles: ['像随口说一句生日快乐，别煽情', '带点小吐槽，别肉麻', '说一件你记得的他的小事，再祝一句'] }
+        : { what: '我的生日', title: '我的生日', chars: '60~90 字', tokens: 350, cap: 260,
+            styles: ['像随口提一句今天是我生日，可以跟他要点什么', '带点小得意，让他说句好听的', '平平淡淡说一句，别撒娇过头'] };
+  const style = spec.styles[Math.floor(Math.random() * spec.styles.length)];
+  const intro = isHisBday
+    ? `今天是哥的生日。你给他写一封短贺报，不用回顾聊天记录。你记得关于他的事：\n${facts || '（没什么特别的）'}`
+    : isHerBday
+      ? `今天是你的生日（${state.me && state.me.birthday ? state.me.birthday : ''}）。你给哥写封短信告诉他今天是你的生日，不用回顾聊天记录。你记得关于他的事：\n${facts || '（没什么特别的）'}`
+      : `下面是${spec.what}你们写信的记录（新的在上）：\n\n${lines}\n${facts ? '\n你记得关于哥的事：\n' + facts : ''}`;
+  const msg = `${intro}\n\n写一封${spec.title}给他：用你平时的口吻，${spec.chars}，只写记录里有的，不许编。\n风格：${style}。\n别写成报告：不要分条列举，不要"总结""回顾"这种标题，不要开头排比。主题名你自己起，越随意越好。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
   try {
-    const out = await callModel(apiKey, [{ role: 'system', content: persona() }, { role: 'user', content: msg }], kind === 'weekly' ? 700 : 900);
+    const out = await callModel(apiKey, [{ role: 'system', content: persona() }, { role: 'user', content: msg }], spec.tokens);
     const cost = addCost(state, out.usage);
     const mm = out.text.match(/^主题[:：]\s*(.+)\n+([\s\S]+)$/);
-    const subject = (mm ? mm[1] : kind === 'weekly' ? '这周' : '这一年').trim().slice(0, 20);
-    const body = humanize((mm ? mm[2] : out.text).trim(), kind === 'weekly' ? 700 : 900, Infinity);   // 周记/年记不按 4 句截
+    const subject = (mm ? mm[1] : spec.title).trim().slice(0, 20);
+    const body = humanize((mm ? mm[2] : out.text).trim(), spec.cap, Infinity);
     if (!body) return false;
     if (dry) { log(`[dry] 主题：${subject}\n[dry] 正文：${body}`); return true; }
     await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
-    if (kind === 'weekly') state.lastWeeklyDay = today();
-    else state.lastYearlyYear = new Date().getFullYear();
+    if (kind === 'yearly') state.lastYearlyYear = new Date().getFullYear();
+    if (kind === 'monthly') state.lastMonthDigest = monthKey(-1);
+    if (kind === 'birthday') state.lastBirthdayYear = new Date().getFullYear();
+    if (kind === 'herBirthday') state.lastHerBirthdayYear = new Date().getFullYear();
     saveState(state);
-    log(`写了${kind === 'weekly' ? '周记' : '年度总结'}：${subject}（约 ${cost.toFixed(5)} 元）`);
+    log(`写了${spec.title}：${subject}（约 ${cost.toFixed(5)} 元）`);
     return true;
   } catch (e) { log('写回顾失败：' + e.message); return false; }
 }
 
-/** 到点了吗：周记按周几+时间，年记按 12-31 */
+/** 某个月的年月键，比如 2026-10 */
+function monthKey(offset = 0) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit' }).format(d);
+}
+
+/** 到点了没：月记（每月 1 号早上）、年记（12-31 晚）、他生日（当天早 8 点）、她生日（当天早 9 点） */
 async function maybeSummaries(apiKey, config, state, auth) {
   const cfg = config.summary || {};
-  if (cfg.weekly === false && cfg.yearly === false) return;
   const now = new Date();
   const hhmm = now.toLocaleTimeString('en-GB', { timeZone: TZ, hour12: false }).slice(0, 5);
-  if (cfg.weekly !== false && now.getDay() === Number(cfg.weeklyWeekday ?? 0) && hhmm >= (cfg.weeklyTime || '21:00') && state.lastWeeklyDay !== today()) {
-    await writeDigest({ apiKey, config, state, auth, kind: 'weekly' });
+  const ymd = now.toLocaleDateString('en-CA', { timeZone: TZ });
+  const md = ymd.slice(5);
+  const day = Number(ymd.slice(8, 10));
+
+  if (cfg.monthly !== false && day === 1 && hhmm >= (cfg.monthlyTime || '09:00') && state.lastMonthDigest !== monthKey(-1)) {
+    await writeDigest({ apiKey, config, state, auth, kind: 'monthly' });
   }
-  const md = now.toLocaleDateString('en-CA', { timeZone: TZ }).slice(5);
   if (cfg.yearly !== false && md === '12-31' && hhmm >= (cfg.yearlyTime || '21:00') && Number(state.lastYearlyYear) !== now.getFullYear()) {
     await writeDigest({ apiKey, config, state, auth, kind: 'yearly' });
   }
+  // 他的生日：那天早上发，别凌晨
+  const bd = String(config.birthday || cfg.birthday || '').trim();
+  if (cfg.birthday !== false && /^\d{2}-\d{2}$/.test(bd) && bd === md && hhmm >= (cfg.birthdayTime || '08:00') && Number(state.lastBirthdayYear) !== now.getFullYear()) {
+    await writeDigest({ apiKey, config, state, auth, kind: 'birthday' });
+  }
+  // 她自己的生日：她自己定下来的那天（state.me.birthday），早上发一封告诉他
+  const herBd = state.me && state.me.birthday ? String(state.me.birthday) : '';
+  if (cfg.herBirthday !== false && /^\d{1,2}-\d{1,2}$/.test(herBd) && herBd.padStart(5, '0') === md && hhmm >= (cfg.herBirthdayTime || '09:00') && Number(state.lastHerBirthdayYear) !== now.getFullYear()) {
+    await writeDigest({ apiKey, config, state, auth, kind: 'herBirthday' });
+  }
 }
 
-/** 每天最多一封主动来信：有由头才发；安静时段、连发超限、刚聊过都不发 */
-/** 今天几点主动写信：每个窗口里随机挑一分钟，存进 state，跨天重算 */
 export function proactivePlan(state, cfg) {
   const day = today();
   if (state.proactivePlan && state.proactivePlan.day === day) return state.proactivePlan;
@@ -1366,8 +1401,10 @@ async function main() {
   }
   if (args.includes('--proactive')) { await maybeProactive(apiKey, config, state, auth); console.log('主动来信已尝试，看日志'); process.exit(0); }
   const dry = args.includes('--dry');
-  if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly', dry }) ? (dry ? '周记已生成（未发送）' : '周记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--monthly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'monthly', dry }) ? (dry ? '月记已生成（未发送）' : '月记已发') : '没写成'); process.exit(0); }
   if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly', dry }) ? (dry ? '年记已生成（未发送）' : '年记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--her-birthday')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'herBirthday', dry }) ? (dry ? '她的生日信已生成（未发送）' : '她的生日信已发') : '没写成'); process.exit(0); }
+  if (args.includes('--birthday')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'birthday', dry }) ? (dry ? '生日贺报已生成（未发送）' : '生日贺报已发') : '没写成'); process.exit(0); }
   if (args.includes('--facts-audit')) {
     const r = auditFacts(state);
     saveState(state);
