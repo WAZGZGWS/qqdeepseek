@@ -274,8 +274,9 @@ export function recordLoops(state, body) {
 /** 挑一件"还没说完的事"提醒她可以追问（别挑跟这封信重复的） */
 export function pickLoop(state, body) {
   const loops = state.openLoops || [];
-  const cand = loops.filter((l) => similarity(l.text, body) < 0.5);
-  return cand.length ? cand[cand.length - 1].text : '';
+  // 同一件事最多问两次，问过就别再念
+  const cand = loops.filter((l) => similarity(l.text, body) < 0.5 && Number(l.asked || 0) < 2);
+  return cand.length ? cand[cand.length - 1] : null;
 }
 
 /** 认识多少天了（从第一次通信算） */
@@ -331,16 +332,22 @@ export function groundFacts(facts, body) {
     // 短事实（≤10 字）只要有一个词对得上就收——模型总结时总会改写措辞，
     // "最近总加班" vs "天天加班" 也该算有依据；长事实仍要 35% 以上重合兜底。
     const short = String(f).length <= 10;
-    return short ? hit >= 1 : hit / ts.length >= 0.35;
+    return short ? hit >= 1 : hit / ts.length >= 0.4;   // 长事实收紧，少让改写的东西混进来
   });
 }
 
-function addFacts(state, facts) {
+function addFacts(state, facts, src = '') {
   if (!Array.isArray(facts) || !facts.length) return 0;
   const norm = (s) => String(s).replace(/[，。！？、,.!?\s]/g, '');
   const have = new Set((state.facts || []).map((f) => norm(f.text)));
   let n = 0;
-  for (const f of facts) if (!have.has(norm(f))) { state.facts = (state.facts || []).concat([{ text: f, addedAt: Date.now() }]); have.add(norm(f)); n += 1; }
+  for (const f of facts) {
+    if (have.has(norm(f))) continue;
+    // 每条事实都留一份"当时他原话"的出处，出了问题能对质
+    state.facts = (state.facts || []).concat([{ text: f, addedAt: Date.now(), src: String(src || '').slice(0, 120) }]);
+    have.add(norm(f));
+    n += 1;
+  }
   state.facts = (state.facts || []).slice(-20);
   return n;
 }
@@ -526,7 +533,7 @@ function lengthMode() {
 async function askModel({ apiKey, history, body, facts, state }) {
   const wx = await weather();
   const sit = situation(state, wx);
-  const sleepy = nowHour() >= 1 && nowHour() < 6;      // 凌晨她是迷糊的
+  const sleepy = nowHour() >= 2 && nowHour() < 5 && String(body || '').length <= 40;   // 凌晨迷糊，但你写长了照常回
   const mode = sleepy ? 'short' : lengthMode();
   const ban = bannedParticles(state);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
@@ -583,7 +590,10 @@ async function askModel({ apiKey, history, body, facts, state }) {
   // 别把刚问过的问题再问一遍
   {
     const loop = pickLoop(state || {}, body);
-    if (loop) rules.push(`他有件事还悬着没结论："${loop}"。可以挑这个时候问一句（一回一封，别每封都追问）。`);
+    if (loop) {
+      loop.asked = Number(loop.asked || 0) + 1;
+      rules.push(`他有件事还悬着没结论："${loop.text}"。可以问一句（这件事你最多问两次，这是第 ${loop.asked} 次）。`);
+    }
     const days = daysTogether(state || {});
     if (days >= 100 && days % 100 === 0 && state && state.milestone !== days) {
       state.milestone = days;
@@ -636,7 +646,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
     usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
   }
   const { text, facts: raw } = parsed;
-  const cap = mode === 'short' ? (sleepy ? 18 : 24) : mode === 'long' ? 320 : 220;
+  const cap = mode === 'short' ? (sleepy ? 30 : 24) : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
@@ -731,7 +741,7 @@ export function budget(state, config, bal) {
 export function sendDelayMs(templateUsed, style = 'human') {
   // 节奏可调：instant（2~8 秒）/ fast（20~90 秒）/ human（白天 2~30 分钟，夜里 1~6 分钟）
   const hh = nowHour();
-  if (hh >= 1 && hh < 6) return 10 * 60000 + Math.floor(Math.random() * 20 * 60000);   // 凌晨她睡着了，10~30 分钟才回
+  if (hh >= 2 && hh < 5) return 5 * 60000 + Math.floor(Math.random() * 10 * 60000);   // 凌晨她睡着了，5~15 分钟才回
   if (style === 'instant') return 2000 + Math.floor(Math.random() * 6000);
   if (style === 'fast') return 20000 + Math.floor(Math.random() * 70000);
   if (templateUsed) return 20000 + Math.floor(Math.random() * 40000);
@@ -928,7 +938,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
 
   const grounded = groundFacts(facts, body);
   if (grounded.length) {
-    const n = addFacts(state, grounded);
+    const n = addFacts(state, grounded, body);
     if (n) log(`顺手记住 ${n} 条：` + grounded.slice(0, 3).join(' / '));
   }
   if (facts.length > grounded.length) log(`过滤掉 ${facts.length - grounded.length} 条没有依据的"事实"`);
@@ -1205,6 +1215,29 @@ async function main() {
   const dry = args.includes('--dry');
   if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly', dry }) ? (dry ? '周记已生成（未发送）' : '周记已发') : '没写成'); process.exit(0); }
   if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly', dry }) ? (dry ? '年记已生成（未发送）' : '年记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--facts') || args.includes('--facts-del')) {
+    const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
+    const di = args.indexOf('--facts-del');
+    if (di >= 0) {
+      const no = Number(args[di + 1]);
+      const list = state.facts || [];
+      if (!Number.isInteger(no) || no < 1 || no > list.length) { console.log('没有第 ' + no + ' 条'); process.exit(0); }
+      const removed = list.splice(no - 1, 1)[0];
+      state.facts = list;
+      saveState(state);
+      console.log('已删除：' + removed.text);
+      process.exit(0);
+    }
+    const list = state.facts || [];
+    if (!list.length) { console.log('还没有记住的长期事实。'); process.exit(0); }
+    console.log('长期事实 ' + list.length + ' 条（带出处，可核对）：');
+    list.forEach((f, i) => {
+      console.log(`  ${String(i + 1).padStart(2)}  ${fmt(f.addedAt)}  ${f.text}`);
+      if (f.src) console.log(`      出处：${f.src}`);
+    });
+    console.log('\n删某条：--facts-del 编号');
+    process.exit(0);
+  }
   if (args.includes('--memory') || args.includes('--memory-del') || args.includes('--memory-clear') || args.includes('--memory-export')) {
     const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
     if (args.includes('--memory-clear')) {
