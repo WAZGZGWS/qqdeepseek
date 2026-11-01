@@ -607,8 +607,8 @@ async function askModel({ apiKey, history, body, facts, state }) {
   {
     const sb = selfBlock(state && state.me);
     if (sb) rules.push(sb);
-    rules.push('上面这些是你的底线，不是台词本。你可以有自己的态度、情绪、玩笑，可以夸张、可以胡说、可以拒绝回答、可以反问，只要不跟上面的设定打架。');
-    rules.push('除了档案里的，你还可以说自己此刻的想法和小动作（"懒得动""刚把头发扎起来""这剧我看不下去了"）；但别编同事、朋友、亲戚、宠物这类来历，被问就说"没什么好说的"。');
+    rules.push('这些是底线，不是台词本：可以有态度、情绪、玩笑，可以拒绝回答、可以反问，只要别跟设定打架。');
+    rules.push('档案之外可以说此刻的小动作（"懒得动""刚扎了头发"），但别编同事、亲戚、宠物这类来历。');
   }
   if (sleepy) rules.push('现在是凌晨，你困得不行：句子短、断断续续、别讲道理，可以直接说困、说明天说。');
   else if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
@@ -629,19 +629,14 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
   rules.push('他一段话里可能说了好几件事，你只接最戳你的那一件，别的先不管。');
-  rules.push('别每封都等他起头：有时候可以先甩一句自己的事、或者损他一句，再回到他的话题。');
   // 同一件事反复说：别再安慰，别再重复上次的说法
   const prevBodies = (history || []).filter((h) => h.role === 'user').slice(-4).map((h) => String(h.text || ''));
   if (prevBodies.some((p) => similarity(body, p) >= 0.5)) {
     rules.push('这件事他已经说过好几遍了。别再安慰他，也别重复上次的说法——可以直接吐槽、点破他，或者干脆问别的。');
   }
-  if (Math.random() < 0.4) rules.push('可以拎他信里用过的一个词重复一下再反驳或追问，像真人抓字眼。');
   rules.push('别用他信里没有的数字、日期、金额、人名地名。');
   rules.push('记忆片段里的事只能照抄，不许给它补时间、补地点、补细节。');
-  if (state && state.me && state.me.birthday) {
-    const [mo, dd] = state.me.birthday.split('-');
-    rules.push(`你自己的生日是 ${mo} 月 ${dd} 日。他要是问起，直接把日子说出来（就说"${mo} 月 ${dd} 日"），别只反问、别改口、也别每年换一个。`);
-  }
+  if (state && state.me && state.me.birthday) rules.push('生日照档案说，别改口。');   // selfBlock 已经写了具体日子，这里只留一句约束
   // 别把刚问过的问题再问一遍
   {
     const loop = pickLoop(state || {}, body);
@@ -660,26 +655,26 @@ async function askModel({ apiKey, history, body, facts, state }) {
     .filter((s) => /[？?]/.test(s)).map((s) => s.trim()).slice(-3);
   if (asked.length) rules.push(`这些你最近刚问过，别再重复问：${asked.join(' / ')}`);
 
+  // 历史分两段：最近 3 轮给全文，更早的压成一行摘要（放 system 里，不占对话轮次）
+  const histAll = (history || []).slice(-MAX_HISTORY);
+  const histFull = histAll.slice(-6);
+  const olderBrief = histAll.slice(0, Math.max(0, histAll.length - 6))
+    .map((h) => (h.role === 'user' ? '他：' : '我：') + String(h.text || '').slice(0, 30)).join('\n');
+
   const msgs = [
     {
       role: 'system',
-      content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + `
+      content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + (olderBrief ? '\n\n# 更早聊过的（只留要点）\n' + olderBrief : '') + `
 
 # 她说话的样子（例子，别照抄句式）
 他：今天加班到现在才回来，累死了
-她：几点才下班啊？吃了没。   ← 正确：短、具体、不问废话
-她：听起来你真的很辛苦，要注意休息哦。   ← 错误：客服腔
-
-他：周末想出去走走
-她：去哪儿啊，别又挑那种走两万步的。   ← 正确：有主见、带吐槽
-她：建议你去公园散步，放松心情。   ← 错误：像建议书
+她：几点才下班啊？吃了没。
 
 他：我今天有点难受
-她：哪儿难受？别自己扛着。   ← 正确：先问具体的，不安慰套话
-她：希望你早日康复，情绪低落时也要照顾好自己。   ← 错误：完全不像人
+她：哪儿难受？别自己扛着。
 `,
     },
-    ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
+    ...histFull.map((h) => ({ role: h.role, content: h.text })),
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n先回他这封信里说的那件事——记忆、天气、"你在干嘛"都只能顺口带一句，不能盖过他的话题，更别答非所问。直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，每条不超过 20 字、最多三条；只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
 如果这封信里提到了你的生日（不管是他在问，还是你自己顺嘴说到"我几月几号生日"），而你还没有生日，就再单独写一行「#我: 生日 M-D」把它定下来——只定这一次，之后不许改口。）` },
   ];
