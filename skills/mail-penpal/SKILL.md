@@ -6,7 +6,7 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
-> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+> 文中的 <工作区>\... 是路径示例，换成你自己项目的目录即可。
 
 # mail-penpal（邮件妹妹运维）
 
@@ -16,14 +16,14 @@ user-invocable: true
 
 | 项 | 路径 |
 |---|---|
-| 服务目录 | `E:\1\qq-stack\mailbot` |
+| 服务目录 | `<mailbot 目录>` |
 | 主程序 | `mailbot.mjs`（Node ≥ 20）|
 | 记忆模块 | `memory.mjs` |
 | 状态 | `state.json` / `state.bak.json` |
 | 记忆库 | `memory.jsonl`（索引）/ `memory.raw.jsonl`（原文）|
 | 日志 | `mailbot.log`（UTF-8）、`out.log`、`err.log` |
 | 人格 | `persona.md` |
-| 公开仓库副本 | `E:\1\mail-penpal`（脱敏，用 `E:\1\repo-sync.mjs` 同步）|
+| 公开仓库副本 | `<仓库副本>`（脱敏，用 `<工作区>\repo-sync.mjs` 同步）|
 
 进程：单个 `node mailbot.mjs`，由 `run-loop.cmd` 守着，`MailBotWatchdog` 每 10 分钟看心跳（`heartbeat` 文件）。
 
@@ -40,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh\skills\m
 或者直接读：
 
 ```powershell
-cd E:\1\qq-stack\mailbot
+cd <mailbot 目录>
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'mailbot.mjs' }
 Get-Content heartbeat; Get-Content mailbot.log -Tail 5 -Encoding UTF8
 node mailbot.mjs --status   # 注意：会要锁；服务在跑时会提示"已有实例"，属正常
@@ -63,9 +63,9 @@ node mailbot.mjs --status   # 注意：会要锁；服务在跑时会提示"已�
 | 写周记/年记（dry 不发） | `node mailbot.mjs --weekly --dry` |
 | 清空记忆 | `node mailbot.mjs --memory-clear --yes` |
 | 彻底重置 | `node mailbot.mjs --purge --yes` |
-| 跑自测（42 项，不连网） | `cd E:\1\mail-penpal; node test/selftest.mjs` |
+| 跑自测（42 项，不连网） | `cd <仓库副本>; node test/selftest.mjs` |
 
-**注意**：`--status`、`--memory` 等命令启动时会抢单实例锁，服务在跑时会打印“已有实例在跑 pid …”然后退出。要跑这些命令，先停服务循环（`Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | ? { $_.CommandLine -match 'run-loop' } | Stop-Process -Force`），用完再 `Start-Process wscript.exe -ArgumentList 'E:\1\qq-stack\mailbot\run-mailbot.vbs'`。
+**注意**：`--status`、`--memory` 等命令启动时会抢单实例锁，服务在跑时会打印“已有实例在跑 pid …”然后退出。要跑这些命令，先停服务循环（`Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | ? { $_.CommandLine -match 'run-loop' } | Stop-Process -Force`），用完再 `Start-Process wscript.exe -ArgumentList '<mailbot 目录>\run-mailbot.vbs'`。
 
 ## 排障清单
 
@@ -77,7 +77,7 @@ node mailbot.mjs --status   # 注意：会要锁；服务在跑时会提示"已�
 | 她说从没说过的事 | `--facts` 看出处 | 记忆污染，删掉即可 |
 | 同一件事反复问 | `state.openLoops` 的 `asked` | 设计上限 2 次 |
 | 弹“无法验证发布者” | 框里的文件名 | 旧 QQ 栈残留脚本；已删 `napcat-boot.bat` 等 |
-| 火绒弹窗 | 火绒 → 信任区 | 加 `E:\1\qq-stack\mailbot` 和 `E:\nodejs\node.exe` |
+| 火绒弹窗 | 火绒 → 信任区 | 加 `<mailbot 目录>` 和 `<node.exe>` |
 | 服务不在 | `--status`、`heartbeat` 时间戳 | 手动 `wscript.exe run-mailbot.vbs` 起 |
 
 ## 配置（`config.json`）
@@ -98,8 +98,8 @@ node mailbot.mjs --status   # 注意：会要锁；服务在跑时会提示"已�
 ## 禁忌
 
 1. **别同时起两个实例**——会抢同一个信箱、重复回信（踩过）。
-2. **别删 `E:\1\qq-stack\dsh-qq`**——DSH 的 MCP 服务在那跑。
-3. 改完 `mailbot.mjs` 后：`node --check` → 起服务 → 看日志第一行；要公开就 `node E:\1\repo-sync.mjs` 再推仓库。
+2. **别删 `<工作区>\qq-stack\dsh-qq`**——DSH 的 MCP 服务在那跑。
+3. 改完 `mailbot.mjs` 后：`node --check` → 起服务 → 看日志第一行；要公开就 `node <工作区>\repo-sync.mjs` 再推仓库。
 4. 仓库推送要 GitHub token（用户会给），用完提醒他删。
 
 ## 她的行为规则（改之前先读）
