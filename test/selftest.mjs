@@ -237,6 +237,20 @@ await t('她不会白天说"刚睡醒"，也不会一天说两次', () => {
   assert.ok(bot.allowedExtras({}, 22).includes('有点困'), '晚上十点应该是困了');
 });
 
+await t('时段和禁语跟着真实钟点走', () => {
+  assert.strictEqual(bot.timePolicy(7).slot, '早上');
+  assert.ok(bot.timePolicy(7).avoid.includes('晚安'), '早上不该道晚安');
+  assert.strictEqual(bot.timePolicy(14).slot, '下午');
+  assert.strictEqual(bot.timePolicy(23).slot, '深夜');
+  assert.ok(bot.timePolicy(23).avoid.includes('早上好'), '深夜不该问早安');
+});
+
+await t('时间打架的句子会被删掉', () => {
+  assert.strictEqual(bot.guardTime('早点睡吧。', 9), '', '上午说早点睡应该被删');
+  assert.ok(bot.guardTime('早点睡吧。今天忙不忙？', 9).includes('今天忙不忙'), '无辜的句子要留着');
+  assert.ok(bot.guardTime('晚安，睡吧。', 23).includes('晚安'), '深夜说晚安是合理的');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
