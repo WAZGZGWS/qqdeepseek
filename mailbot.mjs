@@ -234,7 +234,57 @@ export function splitMemory(out) {
   return { text: kept.join('\n').trim(), facts };
 }
 
-/** 从输出里抠「#我: 生日 3-14」这类关于她自己的固定设定；只取生日 */
+/** 从他的信里挑"还没结论"的话：带问号，或说"看情况/回头再说" */
+export function extractLoops(body) {
+  const text = String(body || '');
+  const hints = /(回头再说|看情况|到时候|再说吧|考虑一下|想想|看天气|不确定|可能要|下周|明天再看)/;
+  const sentences = text.split(/(?<=[。！？!?~；;\n])/).map((x) => x.trim()).filter(Boolean);
+  const out = [];
+  for (const s of sentences) {
+    if (s.length < 6) continue;
+    if (/[？?]/.test(s) || hints.test(s)) out.push(s.slice(0, 40));
+  }
+  return out.slice(0, 3);
+}
+
+/** body 里是不是又提到 loop 这件事（重叠两个词以上、且覆盖三成） */
+export function mentions(loopText, body) {
+  const lt = new Set(tokenize(loopText).filter((t) => t.length === 2));
+  const bt = new Set(tokenize(body).filter((t) => t.length === 2));
+  if (!lt.size) return false;
+  let hit = 0;
+  for (const t of lt) if (bt.has(t)) hit += 1;
+  return hit >= 2 && hit / lt.size >= 0.25;
+}
+
+/** 维护"悬着的事"清单：新出现的加进去，他已经回答过的移出去，最多留 5 条 7 天 */
+export function recordLoops(state, body) {
+  const now = Date.now();
+  state.openLoops = (state.openLoops || [])
+    .filter((l) => l && l.text && now - l.at < 7 * 86400000)
+    .filter((l) => !mentions(l.text, body));   // 他再次提到这件事，就当已经聊过
+  for (const t of extractLoops(body)) {
+    if (state.openLoops.some((l) => similarity(l.text, t) >= 0.6)) continue;
+    state.openLoops.push({ text: t, at: now });
+  }
+  state.openLoops = state.openLoops.slice(-5);
+  return state.openLoops;
+}
+
+/** 挑一件"还没说完的事"提醒她可以追问（别挑跟这封信重复的） */
+export function pickLoop(state, body) {
+  const loops = state.openLoops || [];
+  const cand = loops.filter((l) => similarity(l.text, body) < 0.5);
+  return cand.length ? cand[cand.length - 1].text : '';
+}
+
+/** 认识多少天了（从第一次通信算） */
+export function daysTogether(state) {
+  if (!state || !state.firstSeen) return 0;
+  return Math.floor((Date.now() - state.firstSeen) / 86400000) + 1;
+}
+
+/** 两句话题的相似度（0~1）：判断"他是不是又在说同一件事" */
 export function splitSelf(out) {
   const self = {};
   const kept = [];
@@ -476,7 +526,8 @@ function lengthMode() {
 async function askModel({ apiKey, history, body, facts, state }) {
   const wx = await weather();
   const sit = situation(state, wx);
-  const mode = lengthMode();
+  const sleepy = nowHour() >= 1 && nowHour() < 6;      // 凌晨她是迷糊的
+  const mode = sleepy ? 'short' : lengthMode();
   const ban = bannedParticles(state);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
   const hint = memoryHint(body, 6);
@@ -499,7 +550,8 @@ async function askModel({ apiKey, history, body, facts, state }) {
     rules.push('上面这些是你的底线，不是台词本。你可以有自己的态度、情绪、玩笑，可以夸张、可以胡说、可以拒绝回答、可以反问，只要不跟上面的设定打架。');
     rules.push('除了档案里的，你还可以说自己此刻的想法和小动作（"懒得动""刚把头发扎起来""这剧我看不下去了"）；但别编同事、朋友、亲戚、宠物这类来历，被问就说"没什么好说的"。');
   }
-  if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
+  if (sleepy) rules.push('现在是凌晨，你困得不行：句子短、断断续续、别讲道理，可以直接说困、说明天说。');
+  else if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。`);
@@ -529,6 +581,15 @@ async function askModel({ apiKey, history, body, facts, state }) {
     rules.push(`你自己的生日是 ${mo} 月 ${dd} 日。他要是问起，直接把日子说出来（就说"${mo} 月 ${dd} 日"），别只反问、别改口、也别每年换一个。`);
   }
   // 别把刚问过的问题再问一遍
+  {
+    const loop = pickLoop(state || {}, body);
+    if (loop) rules.push(`他有件事还悬着没结论："${loop}"。可以挑这个时候问一句（一回一封，别每封都追问）。`);
+    const days = daysTogether(state || {});
+    if (days >= 100 && days % 100 === 0 && state && state.milestone !== days) {
+      state.milestone = days;
+      rules.push(`今天是你们认识的第 ${days} 天。可以顺口提一句，别煽情。`);
+    }
+  }
   const asked = (history || []).filter((h) => h.role === 'assistant').slice(-3)
     .flatMap((h) => String(h.text || '').split(/(?<=[。！？!?~])/))
     .filter((s) => /[？?]/.test(s)).map((s) => s.trim()).slice(-3);
@@ -575,7 +636,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
     usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
   }
   const { text, facts: raw } = parsed;
-  const cap = mode === 'short' ? 24 : mode === 'long' ? 320 : 220;
+  const cap = mode === 'short' ? (sleepy ? 18 : 24) : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
@@ -669,6 +730,8 @@ export function budget(state, config, bal) {
 /** 发信延迟：白天压到 30 分钟内（免得"现在"过期），深夜他醒着就快一点 */
 export function sendDelayMs(templateUsed, style = 'human') {
   // 节奏可调：instant（2~8 秒）/ fast（20~90 秒）/ human（白天 2~30 分钟，夜里 1~6 分钟）
+  const hh = nowHour();
+  if (hh >= 1 && hh < 6) return 10 * 60000 + Math.floor(Math.random() * 20 * 60000);   // 凌晨她睡着了，10~30 分钟才回
   if (style === 'instant') return 2000 + Math.floor(Math.random() * 6000);
   if (style === 'fast') return 20000 + Math.floor(Math.random() * 70000);
   if (templateUsed) return 20000 + Math.floor(Math.random() * 40000);
@@ -711,6 +774,8 @@ async function flushOutbox(config, state, auth) {
     const hisEntry = item.his ? [{ role: 'user', text: String(item.his).slice(0, 600) }] : [];
     state.history = (state.history || []).concat(hisEntry, [{ role: 'assistant', text: item.text.slice(0, 600) }]).slice(-24);
     state.lastExchangeAt = Date.now();
+    if (!state.firstSeen) state.firstSeen = Date.now();
+    recordLoops(state, item.his || '');
     state.unansweredProactive = 0;
     state.lastEmotion = item.emotion || state.lastEmotion;
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
@@ -1080,7 +1145,7 @@ async function main() {
       process.exit(0);
     }
     for (const f of [path.join(DIR, 'memory.jsonl'), path.join(DIR, 'memory.raw.jsonl')]) { try { fs.unlinkSync(f); } catch {} }
-    for (const k of ['history', 'facts', 'seen', 'seenUids', 'outbox', 'recentExtras', 'recentWeather', 'recentParticles', 'lastEmotion', 'alerts', 'lastProactiveDay', 'unansweredProactive', 'lowWarned', 'balanceWarnDay', 'secretOkAt', 'strangers']) delete state[k];
+    for (const k of ['history', 'facts', 'seen', 'seenUids', 'outbox', 'recentExtras', 'recentWeather', 'recentParticles', 'lastEmotion', 'alerts', 'lastProactiveDay', 'unansweredProactive', 'lowWarned', 'balanceWarnDay', 'secretOkAt', 'strangers', 'openLoops', 'firstSeen', 'milestone']) delete state[k];
     saveState(state);
     console.log('清空了：记忆库、事实、历史、队列。从现在起她什么都不记得。');
     process.exit(0);
