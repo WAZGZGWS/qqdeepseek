@@ -928,28 +928,61 @@ async function maybeSummaries(apiKey, config, state, auth) {
 }
 
 /** 每天最多一封主动来信：有由头才发；安静时段、连发超限、刚聊过都不发 */
+/** 今天几点主动写信：每个窗口里随机挑一分钟，存进 state，跨天重算 */
+export function proactivePlan(state, cfg) {
+  const day = today();
+  if (state.proactivePlan && state.proactivePlan.day === day) return state.proactivePlan;
+  const wins = Array.isArray(cfg.windows) && cfg.windows.length ? cfg.windows : [String(cfg.time || '20:30') + '-' + String(cfg.time || '20:30')];
+  const max = Number(cfg.maxPerDay || wins.length);
+  const items = [];
+  for (const w of wins.slice(0, max)) {
+    const m = String(w).match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})(?:\s*\*\s*([\d.]+))?$/);
+    if (!m) continue;
+    const from = Number(m[1]) * 60 + Number(m[2]);
+    const to = Number(m[3]) * 60 + Number(m[4]);
+    if (to <= from) continue;
+    // *0.35 这种后缀：只有这么多比例的日子会写，其余天她睡了
+    const chance = m[5] == null ? 1 : Math.max(0, Math.min(1, Number(m[5])));
+    if (chance < 1 && Math.random() > chance) continue;   // 今天这一格她不写了
+    const pick = from + Math.floor(Math.random() * (to - from));   // 窗口里随机一分钟，别每天同一时刻
+    const d = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+    // TZ 默认 Asia/Shanghai（+08:00）；换时区要一起改这里
+    const at = new Date(`${d.year}-${d.month}-${d.day}T${String(Math.floor(pick / 60)).padStart(2, '0')}:${String(pick % 60).padStart(2, '0')}:00+08:00`).getTime();
+    // 已经过去超过 5 分钟的窗口算"错过"，标成 sent，免得一重启就补发一串
+    items.push({ at, sent: at < Date.now() - 5 * 60 * 1000 });
+  }
+  items.sort((a, b) => a.at - b.at);
+  state.proactivePlan = { day, items };
+  saveState(state);   // 落盘：重启不会重抽，也方便在状态里查
+  return state.proactivePlan;
+}
+
 async function maybeProactive(apiKey, config, state, auth) {
   const cfg = config.proactive || {};
   if (cfg.enabled === false) return;
   const now = new Date();
   const hhmm = now.toLocaleTimeString('en-GB', { timeZone: TZ, hour12: false }).slice(0, 5);
-  const at = cfg.time || '20:30';
-  if (hhmm < at) return;
   const quietFrom = cfg.quietFrom || '23:00';
-  const quietTo = cfg.quietTo || '08:00';
+  const quietTo = cfg.quietTo || '07:00';
   const inQuiet = quietFrom <= quietTo ? (hhmm >= quietFrom && hhmm < quietTo) : (hhmm >= quietFrom || hhmm < quietTo);
-  if (inQuiet) { log('安静时段（' + quietFrom + '–' + quietTo + '），不主动发信'); return; }
-  if (state.lastProactiveDay === today()) return;
+  if (inQuiet) return;
+  // 先过闸门，再看窗口——否则被挡掉时这一格会被标成已用，白丢了
   if (Number(state.unansweredProactive || 0) >= Number(cfg.maxUnanswered || 2)) { log('连着两封没回，先不主动了'); return; }
   const gapH = Number.isFinite(Number(cfg.minGapHours)) ? Number(cfg.minGapHours) : 6;
   if (state.lastExchangeAt && Date.now() - state.lastExchangeAt < gapH * 3600 * 1000) return;
+  // 到点了没有：窗口里随机挑的那一分钟
+  const plan = proactivePlan(state, cfg);
+  const due = plan.items.find((it) => !it.sent && Date.now() >= it.at);
+  if (!due) return;
+  due.sent = true;   // 过了闸门才标，免得每 100 秒重复触发
+  saveState(state);
 
   const wx = await weather();
   const reasons = [];
   if (!state.lastExchangeAt || Date.now() - state.lastExchangeAt > 36 * 3600 * 1000) reasons.push('好久没聊');
   if (Number.isFinite(wx.min) && Number.isFinite(wx.max) && wx.max - wx.min >= 8) reasons.push('温差大');
   if ([5, 6, 0].includes(now.getDay()) && Number(hhmm.slice(0, 2)) >= 20) reasons.push('周末晚上');
-  if (!reasons.length) { log('今天没什么由头，不主动发'); return; }
+  if (!reasons.length) reasons.push('就是想跟你说句话');   // 窗口是他挑的，不用再等由头
 
   try {
     const facts = (state.facts || []).slice(-20).map((f) => '- ' + f.text).join('\n');
@@ -964,7 +997,7 @@ async function maybeProactive(apiKey, config, state, auth) {
     body = guardSelf(body);
     if (!body) return;
     await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
-    state.lastProactiveDay = today();
+    state.lastProactiveDay = today();   // 只作统计
     state.unansweredProactive = Number(state.unansweredProactive || 0) + 1;
     saveState(state);
     log(`主动写了一封：${subject}｜${body.slice(0, 40)}（约 ${cost.toFixed(5)} 元）`);
