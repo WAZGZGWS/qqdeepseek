@@ -350,30 +350,41 @@ async function weather() {
   return wxCache;
 }
 
-/** 她能说自己正在干嘛的时刻表：允许的小时区间 + 当天最多能说几次 */
+/** 她能说自己正在干嘛的时刻表：允许的小时区间 + 当天最多说几次 + 下一步（用来串成一件事） */
 const EXTRA_TABLE = [
-  { text: '刚睡醒', hours: [[6, 9]], limit: 1 },
-  { text: '在吃饭', hours: [[6, 9], [11, 13], [17, 20]], limit: 3 },   // 三个饭点各算一次
-  { text: '在等外卖', hours: [[17, 21]], limit: 1 },
+  { text: '刚睡醒', hours: [[6, 9]], limit: 1, next: '在刷牙' },
+  { text: '在刷牙', hours: [[6, 9], [21, 23]], limit: 2 },
+  { text: '在做饭', hours: [[11, 13], [17, 20]], limit: 1, next: '在吃饭' },
+  { text: '在等外卖', hours: [[17, 21]], limit: 1, next: '在吃饭' },
+  { text: '在吃饭', hours: [[6, 9], [11, 13], [17, 20]], limit: 3, next: '刚吃完' },
+  { text: '刚吃完', hours: [[7, 10], [12, 14], [18, 21]], limit: 3 },
+  { text: '在洗头', hours: [[8, 22]], limit: 1, next: '在吹头发' },
+  { text: '在吹头发', hours: [[8, 22]], limit: 1 },
+  { text: '在收快递', hours: [[9, 20]], limit: 1, next: '在拆快递' },
+  { text: '在拆快递', hours: [[9, 21]], limit: 1 },
   { text: '刚洗完澡', hours: [[21, 23], [0, 1]], limit: 1 },
   { text: '有点困', hours: [[21, 23], [0, 6]], limit: 2 },
   { text: '窝在沙发上', hours: [[9, 22]], limit: 1 },
   { text: '刚刷完手机', hours: [[9, 23]], limit: 1 },
   { text: '在发呆', hours: [[9, 22]], limit: 2 },
   { text: '刚晾完衣服', hours: [[9, 19]], limit: 1 },
-  { text: '在收快递', hours: [[9, 20]], limit: 1 },
   { text: '在倒垃圾', hours: [[8, 21]], limit: 1 },
-  { text: '在洗头', hours: [[8, 22]], limit: 1 },
   { text: '在泡面', hours: [[11, 14], [17, 22]], limit: 1 },
   { text: '在找钥匙', hours: [[8, 22]], limit: 1 },
   { text: '在看剧', hours: [[19, 23]], limit: 1 },
   { text: '在修电脑', hours: [[9, 22]], limit: 1 },
   { text: '在擦地', hours: [[9, 20]], limit: 1 },
+  { text: '在收衣服', hours: [[17, 22]], limit: 1 },
   { text: '在翻冰箱', hours: [[11, 14], [18, 21]], limit: 1 },
-  { text: '在剪指甲', hours: [[19, 23]], limit: 1 },
 ];
 
 const inHours = (h, ranges) => ranges.some(([x, y]) => (x <= y ? h >= x && h <= y : h >= x || h <= y));
+
+/** 上一封说了什么，下一封可以"顺下去"的那个状态（比如 在等外卖 → 在吃饭） */
+export function nextStep(lastText) {
+  const row = EXTRA_TABLE.find((r) => r.text === lastText);
+  return row && row.next ? row.next : '';
+}
 
 /** 今天的记账本：哪天说过哪些状态、各说了几次 */
 function dayRec(state) {
@@ -398,24 +409,38 @@ export function allowedExtras(state, h = nowHour()) {
   return out;
 }
 
-/** 此刻的状态：按时段 + 当天配额选；延续也要过这两关，且不能紧挨着重复 */
+/**
+ * 此刻的状态：优先"把上一件事往下推一步"（等外卖 → 在吃饭 → 刚吃完），
+ * 这样既不复读，也不显得跳来跳去；实在接不上才随机挑一个。
+ */
 function situation(state, wx) {
   const recent = (state.recentExtras || []).slice(-2);
   const last = state.lastSituation;
   const allowed = allowedExtras(state);
   const d = dayRec(state);
-  const canContinue = last && last.extra && allowed.includes(last.extra) && !recent.includes(last.extra)
-    && Date.now() - last.at < 6 * 3600 * 1000;
+  const lastFresh = last && last.extra && Date.now() - last.at < 6 * 3600 * 1000;
+
   let extra = '';
   let continuing = false;
-  if (canContinue && Math.random() < 0.4) {
+
+  // 1) 顺下去：上一封说在等外卖，这封就说在吃饭
+  const nxt = lastFresh ? nextStep(last.extra) : '';
+  if (nxt && allowed.includes(nxt) && !recent.includes(nxt) && Math.random() < 0.6) {
+    extra = nxt;
+    continuing = true;
+  }
+  // 2) 原地延续：同一件事还没干完
+  if (!extra && lastFresh && allowed.includes(last.extra) && !recent.includes(last.extra) && Math.random() < 0.35) {
     extra = last.extra;
     continuing = true;
-  } else {
+  }
+  // 3) 都不行就随机挑（避开最近两封用过的）
+  if (!extra) {
     const pool = allowed.filter((x) => !recent.includes(x));
     const src = pool.length ? pool : allowed;
     if (src.length) extra = src[Math.floor(Math.random() * src.length)];
   }
+
   if (extra) {
     d.used = d.used || {};
     d.used[extra] = Number(d.used[extra] || 0) + 1;
@@ -478,7 +503,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。`);
-  if (sit.continuing) rules.push(`你上一封就说过自己在${sit.extra}，这次顺势接着（还没弄完 / 刚弄完），别换一个新的状态。`);
+  if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   rules.push('你说的"自己在干嘛"必须跟今天已经说过的对得上：说过在等外卖，就不能转头说刚睡醒；说过刚睡醒，就不能马上说已经在吃饭了。');
   rules.push('如果你这封说"刚睡醒"，就别在同一封里说已经吃过、已经出门、已经忙完。');
