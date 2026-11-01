@@ -275,6 +275,13 @@ await t('状态有当天配额：用过就不给、吃饭能说三次', () => {
   assert.ok(bot.allowedExtras(st3, 12).includes('在吃饭'), '午饭还能说');
 });
 
+await t('状态能顺着往下推：等外卖 → 在吃饭 → 刚吃完', () => {
+  assert.strictEqual(bot.nextStep('在等外卖'), '在吃饭');
+  assert.strictEqual(bot.nextStep('在吃饭'), '刚吃完');
+  assert.strictEqual(bot.nextStep('在洗头'), '在吹头发');
+  assert.strictEqual(bot.nextStep('在发呆'), '', '没有下一步的就不该硬接');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
