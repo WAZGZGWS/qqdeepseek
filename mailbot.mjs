@@ -28,7 +28,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import pkgMail from 'mailparser';
-import { remember, recall, memoryHint, memoryStats, tokenize, similarity, recentRaw, listEntries, removeEntry, clearAll, exportMarkdown } from './memory.mjs';
+import { remember, memoryHint, memoryStats, tokenize, similarity, recentRaw, listEntries, removeEntry, clearAll, exportMarkdown } from './memory.mjs';
 
 const { simpleParser } = pkgMail;
 const DIR = path.dirname(fileURLToPath(import.meta.url));   // 凭据、状态、记忆都放在脚本旁边
@@ -44,7 +44,7 @@ let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 email �
 const IMAP = { host: 'imap.qq.com', port: 993 };
 const SMTP = { host: 'smtp.qq.com', port: 465 };
 const POLL_MS = 100 * 1000;   // 正常轮询间隔；失败会退避，最长 10 分钟
-const MAX_HISTORY = 8;
+const MAX_HISTORY = 12;   // 她的信短，多四条约 80 字，换来"我记得自己说过"
 const MAX_INCOMING = 1200;
 let TZ = 'Asia/Shanghai';   // 由 config.json 的 timezone 覆盖
 const PARTICLE_LIST = ['诶', '呢', '啦', '呗', '哼', '嘛'];
@@ -56,7 +56,10 @@ function rotateLog() {
 }
 const log = (m) => { rotateLog(); const l = `[${new Date().toLocaleString('zh-CN', { timeZone: TZ, hour12: false })}] ${m}`; try { fs.appendFileSync(LOG, l + '\n'); } catch {} console.log(l); };
 const readJson = (p, d) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
-const writeJson = (p, v) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(v, null, 2)); } catch {} };
+const writeJson = (p, v) => {
+  // 先写 .tmp 再改名：断电/崩溃时要么旧版要么新版，不会留下半截 JSON
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); const t = p + '.tmp'; fs.writeFileSync(t, JSON.stringify(v, null, 2)); fs.renameSync(t, p); } catch {}
+};
 
 const STATE_BAK = path.join(DIR, 'state.bak.json');
 /** 状态写盘前先留一份备份：state.json 坏了还能回退 */
@@ -95,7 +98,6 @@ async function alertOnce(code, text, windowMs = 2 * 3600 * 1000) {
   } catch {}
 }
 
-const keepAlive = process.env.MAILBOT_NO_MAIN ? null : setInterval(() => {}, 3600 * 1000);
 
 function decrypt(file) {
   if (process.platform !== 'win32') return '';   // DPAPI 只有 Windows 有
@@ -508,7 +510,7 @@ export function allowedExtras(state, h = nowHour()) {
  * 此刻的状态：优先"把上一件事往下推一步"（等外卖 → 在吃饭 → 刚吃完），
  * 这样既不复读，也不显得跳来跳去；实在接不上才随机挑一个。
  */
-function situation(state, wx) {
+function situation(state, wx, body = '') {
   const recent = (state.recentExtras || []).slice(-2);
   const last = state.lastSituation;
   const allowed = allowedExtras(state);
@@ -518,19 +520,22 @@ function situation(state, wx) {
   let extra = '';
   let continuing = false;
 
+  // 他在说难受的事（累/病/吵架…）时，这次不谈"你正在干嘛"，先接他的话
+  const heavy = /(累|难受|崩溃|撑不住|哭|病|疼|加班|委屈|吵架|分手|医院|失业|辞职)/.test(String(body || ''));
+
   // 1) 顺下去：上一封说在等外卖，这封就说在吃饭
   const nxt = lastFresh ? nextStep(last.extra) : '';
-  if (nxt && allowed.includes(nxt) && !recent.includes(nxt) && Math.random() < 0.6) {
+  if (!heavy && nxt && allowed.includes(nxt) && !recent.includes(nxt) && Math.random() < 0.6) {
     extra = nxt;
     continuing = true;
   }
   // 2) 原地延续：同一件事还没干完
-  if (!extra && lastFresh && allowed.includes(last.extra) && !recent.includes(last.extra) && Math.random() < 0.35) {
+  if (!heavy && !extra && lastFresh && allowed.includes(last.extra) && !recent.includes(last.extra) && Math.random() < 0.35) {
     extra = last.extra;
     continuing = true;
   }
   // 3) 都不行就随机挑（避开最近两封用过的）
-  if (!extra) {
+  if (!heavy && !extra) {
     const pool = allowed.filter((x) => !recent.includes(x));
     const src = pool.length ? pool : allowed;
     if (src.length) extra = src[Math.floor(Math.random() * src.length)];
@@ -544,8 +549,6 @@ function situation(state, wx) {
   }
   const wxRecent = state.recentWeather || [];
   const wet = wxRecent.slice(-2).filter(Boolean).length >= 2;
-  state.__pendingExtra = extra;
-  state.__pendingWeather = !wet && !!wx.text;
   return { extra, weather: wet ? '' : (wx.text || ''), wet, continuing };
 }
 
@@ -570,7 +573,7 @@ function lengthMode() {
 
 async function askModel({ apiKey, history, body, facts, state }) {
   const wx = await weather();
-  const sit = situation(state, wx);
+  const sit = situation(state, wx, body);
   const sleepy = nowHour() >= 2 && nowHour() < 5 && String(body || '').length <= 40;   // 凌晨迷糊，但你写长了照常回
   const mode = sleepy ? 'short' : lengthMode();
   const ban = bannedParticles(state);
@@ -602,6 +605,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   else rules.push('一两句，最多三句。');
   rules.push(`现在是${week}${tp.slot}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。这个点适合聊：${tp.ok}；别说：${tp.avoid}。`);
   if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
+  if (/(累|难受|崩溃|撑不住|哭|病|疼|委屈|吵架|分手)/.test(String(body || ''))) rules.push('他这封在说难受的事：先接他的话，别急着说自己刚在干嘛。');
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   rules.push('你说的"自己在干嘛"必须跟今天说过的对得上：说过在等外卖，就不能转头说刚睡醒；说了刚睡醒，就别在同一封里说已经吃过、已经出门。');
   {
@@ -720,8 +724,10 @@ async function balanceOf(apiKey, force = false) {
   } catch { balCache = { at: Date.now(), val: -1 }; return -1; }
 }
 
+const costOf = (usage) => ((usage?.prompt_tokens || 0) * 0.5 + (usage?.completion_tokens || 0) * 8) / 1e6;   // 单价：输入 0.5 元/M、输出 8 元/M
+
 function addCost(state, usage) {
-  const c = ((usage?.prompt_tokens || 0) * 0.5 + (usage?.completion_tokens || 0) * 8) / 1e6;
+  const c = costOf(usage);
   if (state.costDay !== today()) { state.costDay = today(); state.costToday = 0; }
   state.costToday = Number(state.costToday || 0) + c;
   return c;
@@ -802,8 +808,8 @@ export function sendDelayMs(templateUsed, style = 'human') {
 }
 
 function enqueue(state, item) {
+  // 不在这里落盘：唯一的调用方 processOne 紧接着就 saveState，省一次 5KB 备份+写入
   state.outbox = (state.outbox || []).concat([{ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ...item }]);
-  saveState(state);
 }
 
 /** 到点了就发。发成功才记历史、记记忆、加计数 */
@@ -988,7 +994,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
       text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
       if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
       const cost = addCost(state, usage);
-      log(`这封约 ${cost.toFixed(5)} 元（${mode}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
+      log(`这封约 ${cost.toFixed(5)} 元（${mode}，in ${usage?.prompt_tokens || 0} / out ${usage?.completion_tokens || 0}），今日 ${Number(state.costToday || 0).toFixed(4)} 元`);
     } catch (e) {
       const msg = String((e && e.message) || e);
       // 不是欠费就照常抛给外层，别把网络抖一下当成没钱
@@ -1282,7 +1288,7 @@ async function main() {
     const kind = templateKind(text);
     if (kind || (isNight() && text.length <= 10)) { console.log('（模板，不花钱）她回：', pickTemplate(kind || 'night', state)); process.exit(0); }
     const out = await askModel({ apiKey, history: state.history || [], body: text, facts: state.facts || [], state });
-    const cost = ((out.usage.prompt_tokens || 0) * 0.5 + (out.usage.completion_tokens || 0) * 8) / 1e6;
+    const cost = costOf(out.usage);
     const g = groundFacts(out.facts, text);
     console.log('他说：', text);
     console.log(`她回（${out.mode}）：`, out.reply);
