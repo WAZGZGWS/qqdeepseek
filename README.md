@@ -213,6 +213,17 @@ Windows 上想再加一层保险（进程卡死也能拉起来）：用 `watchdo
 
 过了零点自动清零。想让她今天多说一次某个状态，直接改这个数字再重启即可。
 
+## 她记得什么：自己去看、自己删
+
+```bash
+node mailbot.mjs --memory                  # 列出全部记忆（编号、时间、谁说的、权重）
+node mailbot.mjs --memory-del 12           # 删掉第 12 条
+node mailbot.mjs --memory-clear --yes      # 全清
+node mailbot.mjs --memory-export           # 导出一份 memory.md，双击就能看
+```
+
+检索时会自动做**同义词扩展**（你说“熬夜”也能捞到“加班”那类记录），一次取 6 条最相关的。
+
 ## 优点与代价
 
 ### 优点
