@@ -413,9 +413,9 @@ function bannedParticles(state) {
 /** 长度模式：三成短、六成中、一成多 */
 function lengthMode() {
   const r = Math.random();
-  if (r < 0.3) return 'short';
-  if (r < 0.9) return 'normal';
-  return 'long';
+  if (r < 0.2) return 'short';    // 只回两三个字的概率调低了，别老显得敷衍
+  if (r < 0.8) return 'normal';
+  return 'long';                  // 长回复概率提到 20%，允许她多说
 }
 
 async function askModel({ apiKey, history, body, facts, state }) {
@@ -441,7 +441,8 @@ async function askModel({ apiKey, history, body, facts, state }) {
   {
     const sb = selfBlock(state && state.me);
     if (sb) rules.push(sb);
-    rules.push('说到"你自己"时，只能从上面这些、以及今天的真实状态里挑。别编同事、朋友、亲戚、宠物这类来历；被问就说"没什么好说的"。');
+    rules.push('上面这些是你的底线，不是台词本。你可以有自己的态度、情绪、玩笑，可以夸张、可以胡说、可以拒绝回答、可以反问，只要不跟上面的设定打架。');
+    rules.push('除了档案里的，你还可以说自己此刻的想法和小动作（"懒得动""刚把头发扎起来""这剧我看不下去了"）；但别编同事、朋友、亲戚、宠物这类来历，被问就说"没什么好说的"。');
   }
   if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
@@ -458,6 +459,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
   rules.push('他一段话里可能说了好几件事，你只接最戳你的那一件，别的先不管。');
+  rules.push('别每封都等他起头：有时候可以先甩一句自己的事、或者损他一句，再回到他的话题。');
   // 同一件事反复说：别再安慰，别再重复上次的说法
   const prevBodies = (history || []).filter((h) => h.role === 'user').slice(-4).map((h) => String(h.text || ''));
   if (prevBodies.some((p) => similarity(body, p) >= 0.5)) {
