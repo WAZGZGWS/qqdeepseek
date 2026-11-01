@@ -257,6 +257,36 @@ export function mentions(loopText, body) {
   return hit >= 2 && hit / lt.size >= 0.25;
 }
 
+/** 这条事实在给定文字里有没有依据（短的只要一个词，长的要两个以上） */
+export function supports(factText, sourceText) {
+  const ft = [...new Set(tokenize(factText).filter((t) => t.length === 2))];
+  const st = new Set(tokenize(sourceText).filter((t) => t.length === 2));
+  if (!ft.length) return false;
+  let hit = 0;
+  for (const t of ft) if (st.has(t)) hit += 1;
+  const need = String(factText).length <= 10 ? 1 : 2;
+  return hit >= need;
+}
+
+/** 审计长期事实：模棱两可的、出处里找不到依据的，自动清掉（留档可查） */
+export function auditFacts(state) {
+  const recentText = recentRaw(30, 400).map((r) => r.text).join('\n');
+  const keep = [];
+  const dropped = [];
+  for (const f of state.facts || []) {
+    const text = String((f && f.text) || '');
+    if (!text) { dropped.push({ text: '(空)', why: '空条目' }); continue; }
+    if (/(好像|似乎|大概|应该是|也许|可能)/.test(text)) { dropped.push({ text, why: '模棱两可' }); continue; }
+    const base = String((f && f.src) || '') + '\n' + recentText;
+    if (!supports(text, base)) { dropped.push({ text, why: '出处里找不到依据' }); continue; }
+    keep.push(f);
+  }
+  state.facts = keep;
+  state.factsDropped = (state.factsDropped || []).concat(dropped.map((d) => ({ ...d, at: Date.now() }))).slice(-30);
+  state.lastFactsAudit = Date.now();
+  return { kept: keep.length, dropped };
+}
+
 /** 维护"悬着的事"清单：新出现的加进去，他已经回答过的移出去，最多留 5 条 7 天 */
 export function recordLoops(state, body) {
   const now = Date.now();
@@ -1215,6 +1245,15 @@ async function main() {
   const dry = args.includes('--dry');
   if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly', dry }) ? (dry ? '周记已生成（未发送）' : '周记已发') : '没写成'); process.exit(0); }
   if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly', dry }) ? (dry ? '年记已生成（未发送）' : '年记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--facts-audit')) {
+    const r = auditFacts(state);
+    saveState(state);
+    console.log('审计完成：留 ' + r.kept + ' 条，清掉 ' + r.dropped.length + ' 条');
+    for (const d of r.dropped) console.log('  清掉：' + d.text + '（' + d.why + '）');
+    const hist = state.factsDropped || [];
+    if (hist.length) console.log('历史清理记录 ' + hist.length + ' 条（state.json 的 factsDropped）');
+    process.exit(0);
+  }
   if (args.includes('--facts') || args.includes('--facts-del')) {
     const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
     const di = args.indexOf('--facts-del');
@@ -1292,6 +1331,14 @@ async function main() {
     beat();
     try { await maybeProactive(apiKey, config, state, auth); } catch (e) { log('主动来信出错：' + e.message); }
     try { await maybeSummaries(apiKey, config, state, auth); } catch (e) { log('写回顾出错：' + e.message); }
+    // 每天审计一次长期事实，把没依据的自动清掉（清掉的会留档）
+    try {
+      if (!state.lastFactsAudit || Date.now() - state.lastFactsAudit > 24 * 3600 * 1000) {
+        const r = auditFacts(state);
+        if (r.dropped.length) log('事实审计：留下 ' + r.kept + ' 条，清掉 ' + r.dropped.length + ' 条（' + r.dropped.map((d) => d.why).join('、') + '）');
+        saveState(state);
+      }
+    } catch (e) { log('事实审计出错：' + e.message); }
     // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
     poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
     if (Date.now() - lastBeatLog > 25 * 60000) {
