@@ -40,9 +40,9 @@ const LOCK = path.join(DIR, 'lock');
 const HEARTBEAT = path.join(DIR, 'heartbeat');
 /** 每轮打个心跳，看门狗靠它判断"还活着" */
 const beat = () => { try { fs.writeFileSync(HEARTBEAT, String(Date.now())); } catch {} };
-let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 email 填进来
-const IMAP = { host: 'imap.qq.com', port: 993 };
-const SMTP = { host: 'smtp.qq.com', port: 465 };
+let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 mail.user（或 email）填进来   // 可被 config.mail.user 覆盖
+let IMAP = { host: 'imap.example.com', port: 993 };   // 换服务商只改 config.mail
+let SMTP = { host: 'smtp.example.com', port: 465 };   // 换服务商只改 config.mail
 const POLL_MS = 100 * 1000;   // 正常轮询间隔；失败会退避，最长 10 分钟
 const MAX_HISTORY = 10;   // 折中：8 条时她容易"我啥时候说过"，12 条每封多烧 80 字
 const MAX_INCOMING = 1200;
@@ -1308,6 +1308,13 @@ async function main() {
   fs.mkdirSync(DIR, { recursive: true });
   single();
   const config = readJson(CONFIG, { email: '', owner: '', dailyCap: 35, dailyCostCap: 0.05 });
+  // 邮箱服务器可配：QQ 要是改了协议或者你想换服务商，只改 config.mail，不用动代码
+  if (config.mail && typeof config.mail === 'object') {
+    const mc = config.mail;
+    if (mc.imapHost) IMAP = { host: String(mc.imapHost), port: Number(mc.imapPort || 993) };
+    if (mc.smtpHost) SMTP = { host: String(mc.smtpHost), port: Number(mc.smtpPort || 465) };
+    if (mc.user) MAIL_USER = String(mc.user);
+  }
   const li = args.indexOf('--lowbal');
   if (li >= 0) BAL_OVERRIDE = Number(args[li + 1]);
   TZ = String(config.timezone || 'Asia/Shanghai');
