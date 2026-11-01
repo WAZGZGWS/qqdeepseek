@@ -1,4 +1,4 @@
-﻿﻿﻿﻿# mail-penpal 体检：一次看清她现在的状态
+﻿# mail-penpal 体检：一次看清她现在的状态
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = 'E:\1\qq-stack\mailbot'
 
