@@ -28,7 +28,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import pkgMail from 'mailparser';
-import { remember, recall, memoryHint, memoryStats, tokenize, similarity, recentRaw } from './memory.mjs';
+import { remember, recall, memoryHint, memoryStats, tokenize, similarity, recentRaw, listEntries, removeEntry, clearAll, exportMarkdown } from './memory.mjs';
 
 const { simpleParser } = pkgMail;
 const DIR = path.dirname(fileURLToPath(import.meta.url));   // 凭据、状态、记忆都放在脚本旁边
@@ -479,7 +479,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const mode = lengthMode();
   const ban = bannedParticles(state);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
-  const hint = memoryHint(body, 4);
+  const hint = memoryHint(body, 6);
   const part = nowHour() < 6 ? '半夜' : nowHour() < 9 ? '早上' : nowHour() < 12 ? '上午' : nowHour() < 14 ? '中午' : nowHour() < 18 ? '下午' : nowHour() < 23 ? '晚上' : '深夜';
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
   // 今天几号 + 距上一封信多久：让她能说"都 11 月了""你三天没理我"
@@ -535,7 +535,24 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (asked.length) rules.push(`这些你最近刚问过，别再重复问：${asked.join(' / ')}`);
 
   const msgs = [
-    { role: 'system', content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') },
+    {
+      role: 'system',
+      content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + `
+
+# 她说话的样子（例子，别照抄句式）
+他：今天加班到现在才回来，累死了
+她：几点才下班啊？吃了没。   ← 正确：短、具体、不问废话
+她：听起来你真的很辛苦，要注意休息哦。   ← 错误：客服腔
+
+他：周末想出去走走
+她：去哪儿啊，别又挑那种走两万步的。   ← 正确：有主见、带吐槽
+她：建议你去公园散步，放松心情。   ← 错误：像建议书
+
+他：我今天有点难受
+她：哪儿难受？别自己扛着。   ← 正确：先问具体的，不安慰套话
+她：希望你早日康复，情绪低落时也要照顾好自己。   ← 错误：完全不像人
+`,
+    },
     ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
 如果这封信里提到了你的生日（不管是他在问，还是你自己顺嘴说到"我几月几号生日"），而你还没有生日，就再单独写一行「#我: 生日 M-D」把它定下来——只定这一次，之后不许改口。）` },
@@ -1122,6 +1139,32 @@ async function main() {
   const dry = args.includes('--dry');
   if (args.includes('--weekly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'weekly', dry }) ? (dry ? '周记已生成（未发送）' : '周记已发') : '没写成'); process.exit(0); }
   if (args.includes('--yearly')) { console.log(await writeDigest({ apiKey, config, state, auth, kind: 'yearly', dry }) ? (dry ? '年记已生成（未发送）' : '年记已发') : '没写成'); process.exit(0); }
+  if (args.includes('--memory') || args.includes('--memory-del') || args.includes('--memory-clear') || args.includes('--memory-export')) {
+    const fmt = (ts) => new Date(ts).toLocaleString('zh-CN', { timeZone: TZ, hour12: false });
+    if (args.includes('--memory-clear')) {
+      if (!args.includes('--yes')) { console.log('这会删掉全部记忆。确认请在后面加 --yes'); process.exit(0); }
+      clearAll();
+      console.log('记忆库已清空。');
+      process.exit(0);
+    }
+    const di = args.indexOf('--memory-del');
+    if (di >= 0) {
+      const no = Number(args[di + 1]);
+      console.log(removeEntry(no) ? '已删除第 ' + no + ' 条' : '没有第 ' + no + ' 条');
+      process.exit(0);
+    }
+    if (args.includes('--memory-export')) {
+      const file = path.join(DIR, 'memory.md');
+      const n = exportMarkdown(file);
+      console.log('已导出 ' + file + '（' + n + ' 条）');
+      process.exit(0);
+    }
+    const rows = listEntries();
+    console.log('记忆库共 ' + rows.length + ' 条：');
+    for (const r of rows) console.log(`  ${String(r.no).padStart(3)}  ${fmt(r.at)}  ${r.who === 'he' ? '你说' : '她说'}  ×${r.weight}  ${r.text}`);
+    console.log('\n删某条：--memory-del 编号　　全清：--memory-clear --yes　　导出：--memory-export');
+    process.exit(0);
+  }
   if (args.includes('--once')) {
     const r = await tick(config, state, auth, apiKey);
     const n = await flushOutbox(config, state, auth);
