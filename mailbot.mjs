@@ -350,46 +350,76 @@ async function weather() {
   return wxCache;
 }
 
-const EXTRAS = ['刚睡醒', '在吃饭', '刚洗完澡', '窝在沙发上', '在等外卖', '有点困', '刚刷完手机', '在发呆', '刚晾完衣服'];
+/** 她能说自己正在干嘛的时刻表：允许的小时区间 + 当天最多能说几次 */
+const EXTRA_TABLE = [
+  { text: '刚睡醒', hours: [[6, 9]], limit: 1 },
+  { text: '在吃饭', hours: [[6, 9], [11, 13], [17, 20]], limit: 3 },   // 三个饭点各算一次
+  { text: '在等外卖', hours: [[17, 21]], limit: 1 },
+  { text: '刚洗完澡', hours: [[21, 23], [0, 1]], limit: 1 },
+  { text: '有点困', hours: [[21, 23], [0, 6]], limit: 2 },
+  { text: '窝在沙发上', hours: [[9, 22]], limit: 1 },
+  { text: '刚刷完手机', hours: [[9, 23]], limit: 1 },
+  { text: '在发呆', hours: [[9, 22]], limit: 2 },
+  { text: '刚晾完衣服', hours: [[9, 19]], limit: 1 },
+  { text: '在收快递', hours: [[9, 20]], limit: 1 },
+  { text: '在倒垃圾', hours: [[8, 21]], limit: 1 },
+  { text: '在洗头', hours: [[8, 22]], limit: 1 },
+  { text: '在泡面', hours: [[11, 14], [17, 22]], limit: 1 },
+  { text: '在找钥匙', hours: [[8, 22]], limit: 1 },
+  { text: '在看剧', hours: [[19, 23]], limit: 1 },
+  { text: '在修电脑', hours: [[9, 22]], limit: 1 },
+  { text: '在擦地', hours: [[9, 20]], limit: 1 },
+  { text: '在翻冰箱', hours: [[11, 14], [18, 21]], limit: 1 },
+  { text: '在剪指甲', hours: [[19, 23]], limit: 1 },
+];
 
-/** 这个点她"可以说自己在干嘛"。刚睡醒一天只能说一次，过了 10 点不许再说 */
-export function allowedExtras(state, h = nowHour()) {
-  const d = (state && state.me && state.me.day) || null;
-  const saidWake = !!(d && d.date === today() && d.wokeSaid);
-  const out = [];
-  if (h >= 6 && h < 10 && !saidWake) out.push('刚睡醒');
-  if ((h >= 6 && h <= 9) || (h >= 11 && h <= 13) || (h >= 17 && h <= 20)) out.push('在吃饭');
-  if (h >= 17 && h <= 21) out.push('在等外卖');
-  if (h >= 9 && h <= 22) out.push('窝在沙发上', '刚刷完手机', '在发呆');
-  if (h >= 9 && h <= 19) out.push('刚晾完衣服');
-  if (h >= 21 || h <= 1) out.push('有点困', '刚洗完澡');
-  if (h >= 2 && h <= 5) out.push('有点困');
-  return out.length ? out : ['在发呆'];
+const inHours = (h, ranges) => ranges.some(([x, y]) => (x <= y ? h >= x && h <= y : h >= x || h <= y));
+
+/** 今天的记账本：哪天说过哪些状态、各说了几次 */
+function dayRec(state) {
+  state.me = state.me || {};
+  const d = state.me.day && state.me.day.date === today() ? state.me.day : { date: today(), used: {} };
+  if (!d.used) d.used = {};
+  state.me.day = d;
+  return d;
 }
 
-/** 此刻的状态 + 冷却：最近三封用过的状态词、连着提过天气，这次就换/别提；
- *  另外四成概率"接着上一封的状态"，让人觉得她还是同一个人 */
+/** 这个点她"可以说自己在干嘛"：既在时段内，也没超过当天次数 */
+export function allowedExtras(state, h = nowHour()) {
+  const d = (state && state.me && state.me.day && state.me.day.date === today()) ? state.me.day : { used: {} };
+  const used = d.used || {};
+  const out = [];
+  for (const row of EXTRA_TABLE) {
+    if (row.text === '刚睡醒' && d.wokeSaid) continue;
+    if (!inHours(h, row.hours)) continue;
+    if (Number(used[row.text] || 0) >= row.limit) continue;
+    out.push(row.text);
+  }
+  return out;
+}
+
+/** 此刻的状态：按时段 + 当天配额选；延续也要过这两关，且不能紧挨着重复 */
 function situation(state, wx) {
-  const recent = state.recentExtras || [];
+  const recent = (state.recentExtras || []).slice(-2);
   const last = state.lastSituation;
   const allowed = allowedExtras(state);
-  // 只延续"这个点也说得通"的旧状态：下午说"在等外卖"没问题，说"刚睡醒"就不行
-  const canContinue = last && last.extra && allowed.includes(last.extra) && Date.now() - last.at < 6 * 3600 * 1000;
-  let extra;
+  const d = dayRec(state);
+  const canContinue = last && last.extra && allowed.includes(last.extra) && !recent.includes(last.extra)
+    && Date.now() - last.at < 6 * 3600 * 1000;
+  let extra = '';
   let continuing = false;
-  if (canContinue && Math.random() < 0.55) {
+  if (canContinue && Math.random() < 0.4) {
     extra = last.extra;
     continuing = true;
   } else {
     const pool = allowed.filter((x) => !recent.includes(x));
     const src = pool.length ? pool : allowed;
-    extra = src[Math.floor(Math.random() * src.length)];
+    if (src.length) extra = src[Math.floor(Math.random() * src.length)];
   }
-  // "刚睡醒"一天只说一次，说了就记账，后面不再出现
-  if (extra === '刚睡醒') {
-    state.me = state.me || {};
-    const d = state.me.day && state.me.day.date === today() ? state.me.day : { date: today() };
-    d.wokeSaid = true;
+  if (extra) {
+    d.used = d.used || {};
+    d.used[extra] = Number(d.used[extra] || 0) + 1;
+    if (extra === '刚睡醒') d.wokeSaid = true;
     state.me.day = d;
   }
   const wxRecent = state.recentWeather || [];
@@ -447,10 +477,11 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
-  rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}，你${sit.extra}。`);
+  rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。`);
   if (sit.continuing) rules.push(`你上一封就说过自己在${sit.extra}，这次顺势接着（还没弄完 / 刚弄完），别换一个新的状态。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   rules.push('你说的"自己在干嘛"必须跟今天已经说过的对得上：说过在等外卖，就不能转头说刚睡醒；说过刚睡醒，就不能马上说已经在吃饭了。');
+  rules.push('如果你这封说"刚睡醒"，就别在同一封里说已经吃过、已经出门、已经忙完。');
   {
     const tp = timePolicy(nowHour());
     rules.push(`现在真正的钟点是${tp.slot}。这个点适合聊：${tp.ok}。这个点别说：${tp.avoid}。`);
