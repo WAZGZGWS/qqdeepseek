@@ -1,4 +1,4 @@
-﻿# 自启动项全景：计划任务（含最高权限）、注册表 Run、启动文件夹
+# 自启动项全景：计划任务（含最高权限）、注册表 Run、启动文件夹
 # 用法：powershell -NoProfile -ExecutionPolicy Bypass -File autoruns.ps1
 Write-Host "== 计划任务：会弹 UAC 的（Highest）==" -ForegroundColor Cyan
 Get-ScheduledTask | Where-Object { $_.Principal.RunLevel -eq 'Highest' -and $_.State -ne 'Disabled' } |
@@ -17,10 +17,10 @@ Get-ScheduledTask | Where-Object { $_.State -ne 'Disabled' } | ForEach-Object {
 
 Write-Host ""
 Write-Host "== 注册表 Run / RunOnce ==" -ForegroundColor Cyan
-foreach ($k in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
-  'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce',
-  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run',
-  'HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce') {
+foreach ($k in 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run',
+  'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\RunOnce',
+  'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run',
+  'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\RunOnce') {
   $p = Get-ItemProperty $k -ErrorAction SilentlyContinue
   if ($p) {
     $p.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
@@ -32,7 +32,7 @@ foreach ($k in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
 Write-Host ""
 Write-Host "== 启动文件夹 ==" -ForegroundColor Cyan
 $dirs = @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup",
-  "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup")
+  "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup")
 foreach ($d in $dirs) {
   if (Test-Path $d) {
     Get-ChildItem $d | ForEach-Object { Write-Host ("  " + $d + "  ==>  " + $_.Name) }
