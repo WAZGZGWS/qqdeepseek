@@ -183,7 +183,9 @@ const TEMPLATES = {
   haha: ['笑什么笑，说人话。', '乐啥呢你。', '哼，有什么好笑的。', '你笑点真低。', '行行行，你赢了，别笑了。'],
   fallback: ['在呢，你说。', '嗯？', '怎么啦。', '你说。', '嗯，然后呢。', '怎么了这是。'],
   // 没钱 / 额度用尽的收尾：不是不理他，是把话留到明天
-  outOfCredit: ['今天先到这儿吧，我这边没钱了，明天聊。', '我钱包空了，说不动话……明天聊哥。', '到这儿吧，明天再聊。'],
+  outOfCredit: ['没钱了，今天只能到这儿。明天聊哥。', '我这边见底了，说不动话……明天聊。', '行吧，今天就到这儿，明天聊。'],
+  // 额度用完（不是没钱）的时候用：别让她说成自己不想理他
+  quota: ['今天聊够了，剩下的信我明天再看。', '到量了，明天接着聊。'],
 };
 function pickTemplate(kind, state) {
   const arr = TEMPLATES[kind] || TEMPLATES.fallback;
@@ -819,8 +821,9 @@ async function flushOutbox(config, state, auth) {
       saveState(state);
       continue;
     }
-    if (state.day !== today()) { state.day = today(); state.count = 0; }
+    if (state.day !== today()) { state.day = today(); state.count = 0; state.usedToday = 0; }
     state.count = Number(state.count || 0) + 1;
+    state.usedToday = Number(state.usedToday || 0) + 1;   // 她这一封也算一次互动
     // 只有真回信才记进历史；自检/主动来信这种没有"他说的"就不塞空条目
     const hisEntry = item.his ? [{ role: 'user', text: String(item.his).slice(0, 600) }] : [];
     state.history = (state.history || []).concat(hisEntry, [{ role: 'assistant', text: item.text.slice(0, 600) }]).slice(-24);
@@ -968,11 +971,11 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   let sit = { extra: '', weather: '' };
 
   if (kind || nightTpl || why) {
-    // 真没钱（余额 < 0.05 元）或今天额度用完了，才说「明天聊」；
-    // "余额偏低"（<1 元，其实还能聊几百封）别吓他，照旧用普通模板。
-    const broke = why && (why === '今日到预算上限' || (Number.isFinite(bal) && bal >= 0 && bal < 0.05));
-    const tpl = kind || (nightTpl ? 'night' : (broke ? 'outOfCredit' : 'fallback'));
+    // 余额低于 1 元 = 告别模式：用自己的语气说「明天聊」；额度用完另用 quota
+    const broke = why && why.indexOf('余额') === 0 && Number.isFinite(bal) && bal >= 0 && bal < 1;
+    const tpl = kind || (nightTpl ? 'night' : (broke ? 'outOfCredit' : (why ? 'quota' : 'fallback')));
     text = pickTemplate(tpl, state);
+    if (broke) state.byeSentDay = today();   // 今天只道别这一次，后面的信先不回
     log(`用模板回（${kind || (nightTpl ? '深夜短句' : why)}）：${text}`);
   } else {
     try {
@@ -1047,6 +1050,11 @@ async function tick(config, state, auth, apiKey) {
       log('余额提醒已发（' + bal.toFixed(2) + ' 元）');
     } catch (e) { log('余额提醒没发出去：' + e.message); }
     popupTopUp(bal);
+  }
+  // 余额不到 1 元、今天已经道过别：信箱先不动，等他充值（充值后自动恢复）
+  if (bal >= 0 && bal < 1 && state.byeSentDay === today()) {
+    log('余额不到 1 元，今天已经说过明天聊了，信箱先不动');
+    return { handled: 0 };
   }
   const imap = await Imap.connect();
   try {
@@ -1130,20 +1138,23 @@ async function tick(config, state, auth, apiKey) {
       }
 
       // 每天回信上限：到顶了别把这封信"吃掉"，留着明天看
-      if (state.day !== today()) { state.day = today(); state.count = 0; }
-      if (Number(state.count || 0) >= Number(config.dailyCap || 35)) {
-        log('今天的回信额度用完了，剩下的信留到明天（不标记已读）');
+      if (state.day !== today()) { state.day = today(); state.count = 0; state.usedToday = 0; }
+      const used = Number(state.usedToday == null ? (state.count || 0) : state.usedToday);
+      const capDay = Number(config.dailyCap || 35);
+      if (used >= capDay) {
+        log(`今天的额度用完了（${used}/${capDay}，一来一回都算），剩下的信留到明天（不标记已读）`);
         if (state.quotaNotifiedDay !== today()) {
           state.quotaNotifiedDay = today();
           saveState(state);
           try {
-            await sendMail({ to: config.owner || fromAddr, subject: '（今天聊够了）', text: '今天的额度用完了。剩下的信先留着，我明天再看——不是不理你。', auth });
+            await sendMail({ to: config.owner || fromAddr, subject: '（今天聊够了）', text: '今天的额度用完了（我发一封、你发一封都算）。剩下的信先留着，我明天再看——不是不理你。', auth });
           } catch (e) { log('额度提醒没发出去：' + e.message); }
         }
         break;
       }
 
       state.seenUids = state.seenUids.concat([String(uid)]).slice(-500);
+      state.usedToday = used + 1;   // 他这一封也算一次互动
       saveState(state);
       await imap.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`);
 
@@ -1238,7 +1249,9 @@ async function main() {
   }
   if (args.includes('--status')) {
     console.log(`主人: ${config.owner || '（等第一封来信）'}`);
-    console.log(`今天已回: ${state.day === today() ? (state.count || 0) : 0} / ${config.dailyCap}，今天花费 ${Number(state.costToday || 0).toFixed(4)} / ${config.dailyCostCap || 0.05} 元`);
+    const sentToday = state.day === today() ? (state.count || 0) : 0;
+    const usedToday = state.day === today() ? Number(state.usedToday == null ? sentToday : state.usedToday) : 0;
+    console.log(`今天互动: ${usedToday} / ${config.dailyCap}（她发了 ${sentToday} 封），今天花费 ${Number(state.costToday || 0).toFixed(4)} / ${config.dailyCostCap || 0.05} 元`);
     const ms = memoryStats();
     console.log(`记忆库: ${ms.count} 条（权重合计 ${ms.weight}），${(ms.bytes / 1024).toFixed(1)} KB，原文 ${(ms.rawBytes / 1024).toFixed(1)} KB`);
     console.log(`记得的事: ${(state.facts || []).length} 条`);
