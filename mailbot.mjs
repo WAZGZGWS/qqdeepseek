@@ -352,20 +352,45 @@ async function weather() {
 
 const EXTRAS = ['刚睡醒', '在吃饭', '刚洗完澡', '窝在沙发上', '在等外卖', '有点困', '刚刷完手机', '在发呆', '刚晾完衣服'];
 
+/** 这个点她"可以说自己在干嘛"。刚睡醒一天只能说一次，过了 10 点不许再说 */
+export function allowedExtras(state, h = nowHour()) {
+  const d = (state && state.me && state.me.day) || null;
+  const saidWake = !!(d && d.date === today() && d.wokeSaid);
+  const out = [];
+  if (h >= 6 && h < 10 && !saidWake) out.push('刚睡醒');
+  if ((h >= 6 && h <= 9) || (h >= 11 && h <= 13) || (h >= 17 && h <= 20)) out.push('在吃饭');
+  if (h >= 17 && h <= 21) out.push('在等外卖');
+  if (h >= 9 && h <= 22) out.push('窝在沙发上', '刚刷完手机', '在发呆');
+  if (h >= 9 && h <= 19) out.push('刚晾完衣服');
+  if (h >= 21 || h <= 1) out.push('有点困', '刚洗完澡');
+  if (h >= 2 && h <= 5) out.push('有点困');
+  return out.length ? out : ['在发呆'];
+}
+
 /** 此刻的状态 + 冷却：最近三封用过的状态词、连着提过天气，这次就换/别提；
  *  另外四成概率"接着上一封的状态"，让人觉得她还是同一个人 */
 function situation(state, wx) {
   const recent = state.recentExtras || [];
   const last = state.lastSituation;
-  const canContinue = last && last.extra && Date.now() - last.at < 6 * 3600 * 1000;
+  const allowed = allowedExtras(state);
+  // 只延续"这个点也说得通"的旧状态：下午说"在等外卖"没问题，说"刚睡醒"就不行
+  const canContinue = last && last.extra && allowed.includes(last.extra) && Date.now() - last.at < 6 * 3600 * 1000;
   let extra;
   let continuing = false;
-  if (canContinue && Math.random() < 0.4) {
+  if (canContinue && Math.random() < 0.55) {
     extra = last.extra;
     continuing = true;
   } else {
-    const pool = EXTRAS.filter((x) => !recent.includes(x));
-    extra = (pool.length ? pool : EXTRAS)[Math.floor(Math.random() * (pool.length ? pool.length : EXTRAS.length))];
+    const pool = allowed.filter((x) => !recent.includes(x));
+    const src = pool.length ? pool : allowed;
+    extra = src[Math.floor(Math.random() * src.length)];
+  }
+  // "刚睡醒"一天只说一次，说了就记账，后面不再出现
+  if (extra === '刚睡醒') {
+    state.me = state.me || {};
+    const d = state.me.day && state.me.day.date === today() ? state.me.day : { date: today() };
+    d.wokeSaid = true;
+    state.me.day = d;
   }
   const wxRecent = state.recentWeather || [];
   const wet = wxRecent.slice(-2).filter(Boolean).length >= 2;
@@ -419,6 +444,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}，你${sit.extra}。`);
   if (sit.continuing) rules.push(`你上一封就说过自己在${sit.extra}，这次顺势接着（还没弄完 / 刚弄完），别换一个新的状态。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
+  rules.push('你说的"自己在干嘛"必须跟今天已经说过的对得上：说过在等外卖，就不能转头说刚睡醒；说过刚睡醒，就不能马上说已经在吃饭了。');
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
