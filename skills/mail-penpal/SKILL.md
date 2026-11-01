@@ -6,6 +6,8 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
+> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+
 # mail-penpal（邮件妹妹运维）
 
 一台 Windows 笔记本上跑的「邮箱笔友」服务：收主人的邮件 → 调 DeepSeek 生成回信 → 用她的邮箱发回去。
@@ -28,7 +30,7 @@ user-invocable: true
 ## 先跑体检
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\ZhuanZ1\.dsh\skills\mail-penpal\scripts\health.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.dsh\skills\mail-penpal\scripts\health.ps1"
 ```
 
 它会一次打出：进程、心跳秒数、今天回了几封/花了多少、待发队列、事实与悬事条数、记忆条数、最近日志、计划任务、陌生人计数。
