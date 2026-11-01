@@ -317,6 +317,14 @@ await t('认识天数按第一次通信算', () => {
   assert.strictEqual(bot.daysTogether({}), 0);
 });
 
+await t('同一件事最多追问两次', () => {
+  const st = { openLoops: [{ text: '周末去爬山', at: Date.now(), asked: 0 }] };
+  const a = bot.pickLoop(st, '今天好累');
+  assert.ok(a && a.text, '第一次应该能问');
+  a.asked = 2;
+  assert.strictEqual(bot.pickLoop(st, '今天好累'), null, '问过两次就不再提');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
