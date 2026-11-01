@@ -1,5 +1,8 @@
 # HANDOVER —— 给下一个会话的交接
 
+> 本文件是脱敏版：本机路径一律写成 `<mailbot 目录>`、`<工作区>`、`%USERPROFILE%` 这类占位符。
+> 从生产目录复制过来时要先脱敏，别再把这些路径带回来。
+
 > 写于 2026-11-01 09:30 左右，作者和 d 老师。
 > 新会话开场：**"读 HANDOVER.md，接管邮件妹妹"**，然后加载 `mail-penpal` / `mail-penpal-dev` 两个 skill。
 
@@ -13,12 +16,12 @@
 
 | 项 | 值（2026-11-01 09:15 快照）|
 |---|---|
-| 生产目录 | `E:\1\qq-stack\mailbot` |
+| 生产目录 | `<mailbot 目录>` |
 | 进程 | 单 `node mailbot.mjs`，由 `run-loop.cmd` 守、`MailBotWatchdog` 每 10 分钟查心跳 |
 | 启动方式 | `wscript.exe run-mailbot.vbs`（隐藏窗口，别用 cmd 起，会闪黑框）|
-| 公开仓库副本 | `E:\1\mail-penpal`，用 `node E:\1\repo-sync.mjs` 脱敏同步 |
+| 公开仓库副本 | `<仓库副本>`，用 `node <工作区>\repo-sync.mjs` 脱敏同步 |
 | GitHub | https://github.com/WAZGZGWS/qqdeepseek |
-| 自测 | `cd E:\1\mail-penpal; node test/selftest.mjs`（**42 项**，不连网不花钱）|
+| 自测 | `cd <仓库副本>; node test/selftest.mjs`（**42 项**，不连网不花钱）|
 
 ## 当前配置（`config.json`）
 
@@ -79,7 +82,7 @@
 
 1. **历史按相关度取**（现在按时间取最近 8 条）——中等收益，可能引入噪声
 2. **`repo-sync.mjs` 的锚点会失效**：改源码动了被替换的行就报 MISS，得同步更新它的 from 串
-3. `E:\1\qq-stack` 下还有几十个空目录（旧栈"器官"），可清理但没必要；**`dsh-qq` 不能删**（MCP 服务在那跑）
+3. `<工作区>\qq-stack` 下还有几十个空目录（旧栈"器官"），可清理但没必要；**`dsh-qq` 不能删**（MCP 服务在那跑）
 4. GitHub token 一直沿用用户临时给的，用完要提醒撤销
 
 ## 坑（都是真踩的）
@@ -91,18 +94,18 @@
 | `.cmd` 写中文注释 | 用英文 |
 | 手动起第二个实例 | 只经 `run-mailbot.vbs` 或计划任务；`--status` 报“已有实例”是锁在生效 |
 | 连不上 github.com:443 | 走 Contents API + token，见 `sanitize-and-publish` skill |
-| 火绒弹窗 | 让它把 `E:\1\qq-stack\mailbot` 加信任区 |
+| 火绒弹窗 | 让它把 `<mailbot 目录>` 加信任区 |
 
 ## 怎么验证她还是好的
 
 ```powershell
 # 1) 体检（进程、心跳、今日、队列、记忆、日志、任务）
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\你\.dsh\skills\mail-penpal\scripts\health.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\.dsh\skills\mail-penpal\scripts\health.ps1
 # 2) 试一句她的回法（约 0.001 元）
-cd E:\1\qq-stack\mailbot   # 先停服务循环，否则锁冲突
+cd <mailbot 目录>   # 先停服务循环，否则锁冲突
 node mailbot.mjs --say "在吗"
 # 3) 自测
-cd E:\1\mail-penpal; node test/selftest.mjs
+cd <仓库副本>; node test/selftest.mjs
 ```
 
 ## 接手时最该先问用户的三句
