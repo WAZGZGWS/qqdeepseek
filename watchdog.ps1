@@ -1,7 +1,7 @@
 # mailbot watchdog: restart the mailing service when it stops beating.
 # Runs every 10 minutes via scheduled task MailBotWatchdog (launched through run-watchdog.vbs so no window flashes).
 $ErrorActionPreference = 'SilentlyContinue'
-$dir = 'E:\1\qq-stack\mailbot'
+$dir = $PSScriptRoot   # 脚本就放在 mailbot 目录里
 $hb = Join-Path $dir 'heartbeat'
 $log = Join-Path $dir 'watchdog.log'
 $staleMs = 15 * 60 * 1000
