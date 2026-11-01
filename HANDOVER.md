@@ -94,6 +94,7 @@
 | `.cmd` 写中文注释 | 用英文 |
 | 手动起第二个实例 | 只经 `run-mailbot.vbs` 或计划任务；`--status` 报“已有实例”是锁在生效 |
 | 连不上 github.com:443 | 走 Contents API + token，见 `sanitize-and-publish` skill |
+| 授权码失效（改 QQ 密码、关 IMAP、删授权码都会触发，不是按天过期）| 日志连续“这一轮出错”且带 `LOGIN`；现在会单独发一封“登录不上了”，12 小时一次，带“上次登录成功”时间。去 mail.qq.com → 设置 → 账号 → IMAP 服务重新生成，替换 `mail-auth.dat` |
 | 火绒弹窗 | 让它把 `<mailbot 目录>` 加信任区 |
 
 ## 怎么验证她还是好的
