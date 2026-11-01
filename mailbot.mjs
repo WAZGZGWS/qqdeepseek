@@ -229,12 +229,13 @@ function persona() {
 export function splitMemory(out) {
   const facts = [];
   const kept = [];
+  const dropped = [];
   for (const l of String(out || '').split('\n')) {
     const m = l.match(/^#?\s*(记忆|记住)[:：]\s*(.+)$/);
-    if (m) { for (const f of m[2].split(/[|｜;；]/)) { const s = f.trim().replace(/^[-*•\s]+/, ''); if (s && s !== '无' && s.length <= 30) facts.push(s); } continue; }
+    if (m) { for (const f of m[2].split(/[|｜;；]/)) { const s = f.trim().replace(/^[-*•\s]+/, ''); if (!s || s === '无') continue; if (s.length <= 30) facts.push(s); else dropped.push(s.slice(0, 40)); } continue; }
     kept.push(l);
   }
-  return { text: kept.join('\n').trim(), facts };
+  return { text: kept.join('\n').trim(), facts, dropped };
 }
 
 /** 从他的信里挑"还没结论"的话：带问号，或说"看情况/回头再说" */
@@ -385,14 +386,14 @@ function addFacts(state, facts, src = '') {
   return n;
 }
 
-export function humanize(text, cap = 220) {
+export function humanize(text, cap = 220, maxSentences = 4) {
   let s = String(text || '').trim();
   s = s.replace(/^#{1,6}\s*/gm, '').replace(/^\s*[-*•]\s+/gm, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`{1,3}/g, '');
   const BAD = [/希望(对你|能)有(所)?帮助/g, /有(什么|任何)(可以|需要)?(帮|需要)(助|的)?(吗|呢)?/g, /很(高兴|荣幸)(为您|为你)服务/g, /作为(一个)?AI/g, /总结一下/g, /首先[，,]?/g, /其次[，,]?/g, /最后[，,]?/g, /总之[，,]?/g];
   for (const re of BAD) s = s.replace(re, '');
   s = s.replace(/,\s*/g, '，').replace(/!\s*/g, '！').replace(/\?\s*/g, '？').replace(/\.\s+/g, '。');
   const parts = s.split(/(?<=[。！？…~])/).filter((x) => x.trim());
-  const keep = cap <= 60 ? 1 : 4;
+  const keep = cap <= 60 ? 1 : maxSentences;
   s = (parts.length > keep ? parts.slice(-keep).join('') : s).replace(/\s+/g, ' ').trim();
   if (s.length > cap) s = s.slice(0, cap).replace(/[，。、；：]?$/, '') + '。';
   return s;
@@ -571,7 +572,8 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const ban = bannedParticles(state);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
   const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 6);
-  const part = nowHour() < 6 ? '半夜' : nowHour() < 9 ? '早上' : nowHour() < 12 ? '上午' : nowHour() < 14 ? '中午' : nowHour() < 18 ? '下午' : nowHour() < 23 ? '晚上' : '深夜';
+  // 时段只认 timePolicy 一个口径：原来这里另算一套边界，5 点会同时出现"半夜"和"早上"
+  const tp = timePolicy(nowHour());
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
   // 今天几号 + 距上一封信多久：让她能说"都 11 月了""你三天没理我"
   const dp = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone: TZ, month: 'numeric', day: 'numeric' })
@@ -594,14 +596,15 @@ async function askModel({ apiKey, history, body, facts, state }) {
   else if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
-  rules.push(`现在是${week}${part}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。`);
+  rules.push(`现在是${week}${tp.slot}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。这个点适合聊：${tp.ok}；别说：${tp.avoid}。`);
   if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
-  rules.push('你说的"自己在干嘛"必须跟今天已经说过的对得上：说过在等外卖，就不能转头说刚睡醒；说过刚睡醒，就不能马上说已经在吃饭了。');
-  rules.push('如果你这封说"刚睡醒"，就别在同一封里说已经吃过、已经出门、已经忙完。');
+  rules.push('你说的"自己在干嘛"必须跟今天说过的对得上：说过在等外卖，就不能转头说刚睡醒；说了刚睡醒，就别在同一封里说已经吃过、已经出门。');
   {
-    const tp = timePolicy(nowHour());
-    rules.push(`现在真正的钟点是${tp.slot}。这个点适合聊：${tp.ok}。这个点别说：${tp.avoid}。`);
+    // 她自己说过的话要有账本：最近三封说过在干嘛 + 上一封的状态，免得她反问"我啥时候说过了"
+    const said = (state.recentExtras || []).slice(-3).join('、');
+    const last = state.lastSituation && state.lastSituation.extra ? `，上一封是「${state.lastSituation.extra}」` : '';
+    if (said || last) rules.push(`你最近几封说过自己在：${said || '没说'}${last}。说过就是说过，想不起来也别否认说"我没说过"。`);
   }
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
@@ -658,7 +661,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
 `,
     },
     ...(history || []).slice(-MAX_HISTORY).map((h) => ({ role: h.role, content: h.text })),
-    { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
+    { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n先回他这封信里说的那件事——记忆、天气、"你在干嘛"都只能顺口带一句，不能盖过他的话题，更别答非所问。直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，每条不超过 20 字、最多三条；只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
 如果这封信里提到了你的生日（不管是他在问，还是你自己顺嘴说到"我几月几号生日"），而你还没有生日，就再单独写一行「#我: 生日 M-D」把它定下来——只定这一次，之后不许改口。）` },
   ];
   const budget = mode === 'short' ? 160 : mode === 'long' ? 520 : 380;
@@ -679,6 +682,9 @@ async function askModel({ apiKey, history, body, facts, state }) {
     usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
   }
   const { text, facts: raw } = parsed;
+  // 诊断（确认事实链路后可以删）：分清楚"模型没写记忆行"和"写了但被 30 字上限丢掉"
+  if (parsed.dropped && parsed.dropped.length) log('事实被丢弃 ' + parsed.dropped.length + ' 条（超过 30 字）：' + parsed.dropped.join(' / '));
+  else if (!raw.length && /(记忆|记住)[:：]/.test(out.text)) log('模型写了记忆行，但没有可用事实');
   const cap = mode === 'short' ? (sleepy ? 30 : 24) : mode === 'long' ? 320 : 220;
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
@@ -857,7 +863,7 @@ async function writeDigest({ apiKey, config, state, auth, kind, dry = false }) {
     const cost = addCost(state, out.usage);
     const mm = out.text.match(/^主题[:：]\s*(.+)\n+([\s\S]+)$/);
     const subject = (mm ? mm[1] : kind === 'weekly' ? '这周' : '这一年').trim().slice(0, 20);
-    const body = humanize((mm ? mm[2] : out.text).trim(), kind === 'weekly' ? 700 : 900);
+    const body = humanize((mm ? mm[2] : out.text).trim(), kind === 'weekly' ? 700 : 900, Infinity);   // 周记/年记不按 4 句截
     if (!body) return false;
     if (dry) { log(`[dry] 主题：${subject}\n[dry] 正文：${body}`); return true; }
     await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
@@ -916,7 +922,9 @@ async function maybeProactive(apiKey, config, state, auth) {
     const m = out.text.match(/^主题[:：]\s*(.+)\n+([\s\S]+)$/);
     const subject = (m ? m[1] : '随口问一句').trim().slice(0, 20);
     let body = humanize((m ? m[2] : out.text).trim(), 220);
-    body = guardNumbers(body, wx.text || '');
+    body = guardNumbers(body, [wx.text || '', hhmm, reasons.join('、')].join('\n'));
+    body = guardTime(body, nowHour());
+    body = guardSelf(body);
     if (!body) return;
     await sendMail({ to: config.owner || MAIL_USER, subject, text: body, auth });
     state.lastProactiveDay = today();
@@ -1154,6 +1162,17 @@ function single() {
   process.on('exit', () => { try { if (Number(fs.readFileSync(LOCK, 'utf8').trim()) === process.pid) fs.unlinkSync(LOCK); } catch {} });
 }
 
+/** 锁文件被别的命令顺手删掉时自己补回来：不然第二个实例就拦不住了 */
+function ensureLock() {
+  try {
+    const raw = fs.readFileSync(LOCK, 'utf8').trim();
+    if (raw === String(process.pid)) return;
+    const old = Number(raw) || 0;
+    if (old && old !== process.pid) { try { process.kill(old, 0); return; } catch {} }   // 别的实例还活着，别抢
+  } catch {}
+  try { fs.writeFileSync(LOCK, String(process.pid)); } catch {}
+}
+
 async function main() {
   const args = process.argv.slice(2);
   fs.mkdirSync(DIR, { recursive: true });
@@ -1329,6 +1348,7 @@ async function main() {
   let poll = POLL_MS;
   let lastBeatLog = 0;
   for (;;) {
+    ensureLock();   // 锁要是被别人删了，这一轮补回来
     let failed = false;
     try { await Promise.race([tick(config, state, auth, apiKey), sleep(150000).then(() => { throw new Error('这一轮超过 150 秒，放弃'); })]); }
     catch (e) { failed = true; log('这一轮出错：' + e.message); await alertOnce('tick', '收信这一轮连续出错：' + e.message); }
