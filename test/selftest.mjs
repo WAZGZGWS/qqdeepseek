@@ -282,6 +282,25 @@ await t('状态能顺着往下推：等外卖 → 在吃饭 → 刚吃完', () =
   assert.strictEqual(bot.nextStep('在发呆'), '', '没有下一步的就不该硬接');
 });
 
+await t('换个说法也能捞到旧事（同义词扩展）', () => {
+  const extra = mem.expandQuery('最近老熬夜');
+  assert.ok(extra.includes('加班'), '熬夜应该带上加班');
+  assert.ok(mem.expandQuery('今天天气不错').length === 0, '无关的话不该扩展');
+});
+
+await t('记忆面板：能列、能删、能清空', () => {
+  mem.remember('he', '面板测试条目一', Date.now() - 3 * 86400000);
+  mem.remember('he', '面板测试条目二', Date.now() - 3 * 86400000);
+  const rows = mem.listEntries();
+  assert.ok(rows.length >= 2, '列表应该有条目');
+  const last = rows[rows.length - 1];
+  assert.strictEqual(mem.removeEntry(last.no), true, '删除应该成功');
+  assert.ok(mem.listEntries().length === rows.length - 1, '删一条应该少一条');
+  assert.strictEqual(mem.removeEntry(9999), false, '越界应该失败');
+  mem.clearAll();
+  assert.strictEqual(mem.listEntries().length, 0, '清空后应该为空');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
