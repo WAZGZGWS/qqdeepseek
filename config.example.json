@@ -22,5 +22,7 @@
     "yearly": true,
     "yearlyTime": "21:00"
   },
-  "secret": ""
+  "secret": "",
+  "memory": true,
+  "facts": true
 }
