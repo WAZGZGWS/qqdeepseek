@@ -1,9 +1,7 @@
-# mail-penpal watchdog (Windows, optional)
-# 每 10 分钟检查一次：15 分钟没有心跳、或进程不在了，就重新拉起 run-loop.cmd。
-# 注册（普通权限即可）：
-#   schtasks /Create /TN "MailBotWatchdog" /SC MINUTE /MO 10 /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"<本文件完整路径>\" /F"
+# mailbot watchdog: restart the mailing service when it stops beating.
+# Runs every 10 minutes via scheduled task MailBotWatchdog (launched through run-watchdog.vbs so no window flashes).
 $ErrorActionPreference = 'SilentlyContinue'
-$dir = $PSScriptRoot
+$dir = 'E:\1\qq-stack\mailbot'
 $hb = Join-Path $dir 'heartbeat'
 $log = Join-Path $dir 'watchdog.log'
 $staleMs = 15 * 60 * 1000
@@ -32,6 +30,7 @@ foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force }
 Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*run-loop.cmd*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 Remove-Item (Join-Path $dir 'lock') -Force
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', (Join-Path $dir 'run-loop.cmd') -WindowStyle Hidden
-Write-Log 'restarted run-loop.cmd'
+# 通过 VBS 启动：窗口样式 0 = 完全隐藏，不会闪黑框
+Start-Process -FilePath 'wscript.exe' -ArgumentList (Join-Path $dir 'run-mailbot.vbs') -WindowStyle Hidden
+Write-Log 'restarted via run-mailbot.vbs'
 Start-Sleep -Seconds 5
