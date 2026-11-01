@@ -1,4 +1,4 @@
-﻿---
+---
 name: mail-penpal-dev
 description: "改「邮件妹妹」（mailbot）的省 token 工作流：先查 MAP.md 定位、按行号局部读、用 patch 脚本改、跑自测、隐藏重启、脱敏同步、走 API 推仓库。触发词：改她、优化她、给她加功能、修 mailbot、她说话怪、改她的记忆、邮件的代码。"
 user-invocable: true
@@ -53,7 +53,7 @@ Start-Sleep 8; Get-Content <mailbot 目录>\mailbot.log -Tail 3 -Encoding UTF8
 
 ```js
 import fs from 'node:fs';
-const P = 'E:/1/qq-stack/mailbot/mailbot.mjs';
+const P = '<mailbot 目录>/mailbot.mjs';
 let s = fs.readFileSync(P, 'utf8');
 let bad = 0;
 const rep = (from, to, tag) => {
