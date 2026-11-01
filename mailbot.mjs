@@ -504,7 +504,10 @@ export function budget(state, config, bal) {
 }
 
 /** 发信延迟：白天压到 30 分钟内（免得"现在"过期），深夜他醒着就快一点 */
-export function sendDelayMs(templateUsed) {
+export function sendDelayMs(templateUsed, style = 'human') {
+  // 节奏可调：instant（2~8 秒）/ fast（20~90 秒）/ human（白天 2~30 分钟，夜里 1~6 分钟）
+  if (style === 'instant') return 2000 + Math.floor(Math.random() * 6000);
+  if (style === 'fast') return 20000 + Math.floor(Math.random() * 70000);
   if (templateUsed) return 20000 + Math.floor(Math.random() * 40000);
   const h = nowHour();
   if (h >= 23 || h < 8) return 60000 + Math.floor(Math.random() * 5 * 60000);   // 夜里 1~6 分钟
@@ -703,7 +706,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   if (facts.length > grounded.length) log(`过滤掉 ${facts.length - grounded.length} 条没有依据的"事实"`);
 
   const subj = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
-  const dueAt = Date.now() + sendDelayMs(mode === 'template');
+  const dueAt = Date.now() + sendDelayMs(mode === 'template', String(config.replyDelay || 'human'));
   enqueue(state, {
     dueAt, to: config.owner || fromAddr, subject: subj, text,
     inReplyTo: msgId || undefined,
