@@ -218,7 +218,9 @@ export function recall(query, k = 4, opts = {}) {
   const { minScore = 0, excludeRecentMs = 6 * 3600 * 1000 } = opts;   // 0 = 自动按最高分取
   const { entries, df, avgdl } = load();
   if (!entries.length) return [];
-  const qTokens = [...new Set(tokenize(query).concat(expandQuery(query)))].slice(0, 80);
+  // 正文 token 照旧取前 80，再把同义词接在后面：原来是拼完一起 slice(0,80)，
+  // 长信里扩出来的词永远排在 80 名之后、被整体截掉，等于没开
+  const qTokens = [...new Set([...new Set(tokenize(query))].slice(0, 80).concat(expandQuery(query)))];
   if (!qTokens.length) return [];
   const n = entries.length;
   const now = Date.now();
@@ -276,7 +278,8 @@ export function expandQuery(text) {
   const extra = [];
   for (const group of SYNONYMS) {
     // 只用两个字以上的词去匹配：否则"天气"会因为含"气"被当成"烦"
-    if (group.some((w) => w.length >= 2 && t.includes(w))) extra.push(...group);
+    // 只留 1~2 字：索引里只有这种 token，3 字词（"受不了""不舒服"）永远匹配不上
+    if (group.some((w) => w.length >= 2 && t.includes(w))) extra.push(...group.filter((w) => w.length <= 2));
   }
   return extra;
 }
