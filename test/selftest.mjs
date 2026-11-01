@@ -265,6 +265,16 @@ await t('固定档案会进提示词', () => {
   assert.ok(block.includes('被叫大肥鱼'));
 });
 
+await t('状态有当天配额：用过就不给、吃饭能说三次', () => {
+  const now = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  const st = { me: { day: { date: now, used: { 窝在沙发上: 1 } } } };
+  assert.ok(!bot.allowedExtras(st, 14).includes('窝在沙发上'), '用过的状态不该再出现');
+  const st2 = { me: { day: { date: now, used: { 在吃饭: 3 } } } };
+  assert.ok(!bot.allowedExtras(st2, 12).includes('在吃饭'), '第三顿之后不该再说');
+  const st3 = { me: { day: { date: now, used: { 在吃饭: 1 } } } };
+  assert.ok(bot.allowedExtras(st3, 12).includes('在吃饭'), '午饭还能说');
+});
+
 console.log('\n[10] 状态备份');
 await t('写两次后生成 state.bak.json', () => {
   const s = { hello: 1 };
