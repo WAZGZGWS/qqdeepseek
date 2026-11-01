@@ -297,6 +297,15 @@ node mailbot.mjs --memory-export           # 导出一份 memory.md，双击就�
 node mailbot.mjs --purge --yes
 ```
 
+## 关于
+
+这套东西是**作者和 d 老师的一点思想火花**——一个提需求、拍板、被弹窗烦；一个写代码、翻日志、把坑一个个填上。
+
+`skills/` 下是我们俩攒下来的两个技能包（给 AI 助手用的）：
+
+- `skills/mail-penpal/`：运维手册——查状态、读日志、翻记忆、排障，附一个体检脚本
+- `skills/mail-penpal-dev/`：改代码的省 token 工作流——函数地图、补丁模板、验证矩阵、坑清单
+
 ## 许可
 
 MIT。想保留非商用限制就换成 [PolyForm Noncommercial](https://polyformproject.org/licenses/noncommercial/1.0.0/)，改 `LICENSE` 一个文件即可。
