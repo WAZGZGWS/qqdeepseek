@@ -64,7 +64,10 @@ export function saveState(s) {
   try {
     if (fs.existsSync(STATE)) fs.copyFileSync(STATE, STATE_BAK);
   } catch {}
-  writeJson(STATE, s);
+  // __ 开头的是运行时开关，不写进状态文件
+  const clean = {};
+  for (const k of Object.keys(s)) if (!k.startsWith('__')) clean[k] = s[k];
+  writeJson(STATE, clean);
 }
 /** 读状态：主文件坏了就用备份 */
 export function loadState(def) {
@@ -567,7 +570,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const mode = sleepy ? 'short' : lengthMode();
   const ban = bannedParticles(state);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
-  const hint = memoryHint(body, 6);
+  const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 6);
   const part = nowHour() < 6 ? '半夜' : nowHour() < 9 ? '早上' : nowHour() < 12 ? '上午' : nowHour() < 14 ? '中午' : nowHour() < 18 ? '下午' : nowHour() < 23 ? '晚上' : '深夜';
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
   // 今天几号 + 距上一封信多久：让她能说"都 11 月了""你三天没理我"
@@ -815,14 +818,14 @@ async function flushOutbox(config, state, auth) {
     state.history = (state.history || []).concat(hisEntry, [{ role: 'assistant', text: item.text.slice(0, 600) }]).slice(-24);
     state.lastExchangeAt = Date.now();
     if (!state.firstSeen) state.firstSeen = Date.now();
-    recordLoops(state, item.his || '');
+    if (!state.__memoryOff) recordLoops(state, item.his || '');
     state.unansweredProactive = 0;
     state.lastEmotion = item.emotion || state.lastEmotion;
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
     if (item.extra) state.lastSituation = { extra: item.extra, at: Date.now() };   // 下一封可以接着这个状态
     state.recentWeather = (state.recentWeather || []).concat([!!item.weatherUsed]).slice(-4);
     state.recentParticles = (state.recentParticles || []).concat([PARTICLE_LIST.filter((p) => item.text.includes(p))]).slice(-5);
-    if (item.his) { remember('he', item.his); remember('me', item.text); }
+    if (item.his && !state.__memoryOff) { remember('he', item.his); remember('me', item.text); }
     state.outbox = state.outbox.filter((x) => x.id !== item.id);
     saveState(state);
     sent += 1;
@@ -966,7 +969,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   }
   if (!text) { log('没生成内容，跳过'); return false; }
 
-  const grounded = groundFacts(facts, body);
+  const grounded = state.__factsOff ? [] : groundFacts(facts, body);
   if (grounded.length) {
     const n = addFacts(state, grounded, body);
     if (n) log(`顺手记住 ${n} 条：` + grounded.slice(0, 3).join(' / '));
@@ -1169,6 +1172,10 @@ async function main() {
   if (!Array.isArray(state.me.dislikes)) state.me.dislikes = SELF_DEFAULTS.dislikes.slice();
   if (!Array.isArray(state.me.habits)) state.me.habits = SELF_DEFAULTS.habits.slice();
   if (!state.firstSeen) { const rows = listEntries(); if (rows.length) state.firstSeen = rows[0].at; }
+  state.__memoryOff = config.memory === false;   // "memory": false → 不记、不检索
+  state.__factsOff = config.facts === false;     // "facts": false → 不产长期事实
+  if (state.__memoryOff) log('记忆功能已关闭（config.memory = false）');
+  if (state.__factsOff) log('长期事实已关闭（config.facts = false）');
   saveState(state);   // 立刻落盘，别只在内存里
   MAIL_USER = String(config.email || process.env.MAILBOT_EMAIL || MAIL_USER).trim();
   const tryDat = (f) => { try { return fs.existsSync(f) ? decrypt(f) : ''; } catch { return ''; } };
@@ -1333,7 +1340,7 @@ async function main() {
     try { await maybeSummaries(apiKey, config, state, auth); } catch (e) { log('写回顾出错：' + e.message); }
     // 每天审计一次长期事实，把没依据的自动清掉（清掉的会留档）
     try {
-      if (!state.lastFactsAudit || Date.now() - state.lastFactsAudit > 24 * 3600 * 1000) {
+      if (!state.__factsOff && (!state.lastFactsAudit || Date.now() - state.lastFactsAudit > 24 * 3600 * 1000)) {
         const r = auditFacts(state);
         if (r.dropped.length) log('事实审计：留下 ' + r.kept + ' 条，清掉 ' + r.dropped.length + ' 条（' + r.dropped.map((d) => d.why).join('、') + '）');
         saveState(state);
