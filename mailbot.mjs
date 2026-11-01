@@ -383,7 +383,7 @@ export function groundFacts(facts, body) {
     // 短事实（≤10 字）只要有一个词对得上就收——模型总结时总会改写措辞，
     // "最近总加班" vs "天天加班" 也该算有依据；长事实仍要 35% 以上重合兜底。
     const short = String(f).length <= 10;
-    return short ? hit >= 1 : hit / ts.length >= 0.4;   // 长事实收紧，少让改写的东西混进来
+    return short ? hit >= 1 : hit / ts.length >= 0.45;   // 长事实收紧到 45%，少让改写的东西混进来
   });
 }
 
@@ -406,7 +406,7 @@ function addFacts(state, facts, src = '') {
 export function humanize(text, cap = 220, maxSentences = 4) {
   let s = String(text || '').trim();
   s = s.replace(/^#{1,6}\s*/gm, '').replace(/^\s*[-*•]\s+/gm, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`{1,3}/g, '');
-  const BAD = [/希望(对你|能)有(所)?帮助/g, /有(什么|任何)(可以|需要)?(帮|需要)(助|的)?(吗|呢)?/g, /很(高兴|荣幸)(为您|为你)服务/g, /作为(一个)?AI/g, /总结一下/g, /首先[，,]?/g, /其次[，,]?/g, /最后[，,]?/g, /总之[，,]?/g];
+  const BAD = [/希望(对你|能)有(所)?帮助/g, /有(什么|任何)(可以|需要)?(帮|需要)(助|的)?(吗|呢)?/g, /很(高兴|荣幸)(为您|为你)服务/g, /作为(一个)?AI/g, /总结一下/g, /首先[，,]?/g, /其次[，,]?/g, /最后[，,]?/g, /总之[，,]?/g, /总的来说[，,]?/g, /综合来看[，,]?/g, /建议你/g, /需要注意的是/g];
   for (const re of BAD) s = s.replace(re, '');
   s = s.replace(/,\s*/g, '，').replace(/!\s*/g, '！').replace(/\?\s*/g, '？').replace(/\.\s+/g, '。');
   const parts = s.split(/(?<=[。！？…~])/).filter((x) => x.trim());
@@ -708,10 +708,18 @@ async function askModel({ apiKey, history, body, facts, state }) {
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
-  const allowed = [body, sit.weather, dateStr, gapStr, week, selfNums, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
+  // 只放行这几处的数字：他这封、天气、日期、间隔、星期、她的生日、长期事实、最近两条历史
+  // （原来放行全部历史，等于只要历史上出现过"3"，她就能编"3 斤"）
+  const allowed = [body, sit.weather, dateStr, gapStr, week, selfNums, ...(facts || []).map((f) => f.text || f), ...(history || []).slice(-2).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
   reply = guardTime(reply, nowHour());   // 早上别道晚安，深夜别问早安
   reply = guardSelf(reply);              // 不许编"我同事"这类来历
+  // 跑题检测：只记账不重写。跑题率高了再去调提示词，别凭感觉改
+  try {
+    if (reply && similarity(body, reply) < 0.12 && !/[？?]/.test(reply)) {
+      log(`可能跑题：他说「${String(body).slice(0, 18)}」她回「${String(reply).slice(0, 18)}」`);
+    }
+  } catch {}
   return { reply, facts: raw, usage, mode, sit };
 }
 
