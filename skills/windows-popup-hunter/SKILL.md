@@ -6,7 +6,7 @@ user-invocable: true
 
 > 作者和 d 老师的一点思想火花。
 
-> 文中的 E:\1\... 是路径示例，换成你自己项目的目录即可。
+> 文中的 <工作区>\... 是路径示例，换成你自己项目的目录即可。
 
 # windows-popup-hunter（弹窗猎手）
 
@@ -66,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ...\scripts\autoruns.ps1
 | 情况 | 处置 |
 |---|---|
 | 计划任务（自己的） | `schtasks /Delete /TN "名字" /F`；权限不够就说明要管理员 |
-| 注册表 Run | `Remove-ItemProperty -Path 'HKCU:\...\Run' -Name '名字'` |
+| 注册表 Run | `Remove-ItemProperty -Path 'Registry::HKEY_CURRENT_USER\...\Run' -Name '名字'` |
 | 服务崩溃 | 停用 + 禁用 + 取消重启（见上）|
 | 文件被反复调用 | **删掉那个文件**——比找调用者快，删除后谁调都是“文件不存在” |
 | 安全软件弹窗 | 加信任区（火绒：`主界面 → 三条杠 → 信任区`）|
