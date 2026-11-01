@@ -80,14 +80,14 @@ export function loadState(def) {
 
 /** 出问题时通知主人（同类两小时只发一封，别刷他信箱） */
 let CTX = { auth: null, config: null, state: null };
-async function alertOnce(code, text) {
+async function alertOnce(code, text, windowMs = 2 * 3600 * 1000) {
   try {
     const s = CTX.state;
     const c = CTX.config;
     if (!s || !c || !c.owner || !CTX.auth) return;
     s.alerts = s.alerts || {};
     const now = Date.now();
-    if (now - Number(s.alerts[code] || 0) < 2 * 3600 * 1000) return;
+    if (now - Number(s.alerts[code] || 0) < windowMs) return;
     s.alerts[code] = now;
     saveState(s);
     await sendMail({ to: c.owner, subject: '（她这边出了点问题）', text: `${text}\n\n（自动发的，同类问题两小时内只发一次。详细日志看 mailbot.log。）`, auth: CTX.auth });
@@ -1033,6 +1033,7 @@ async function tick(config, state, auth, apiKey) {
   const imap = await Imap.connect();
   try {
     await imap.cmd(`LOGIN "${MAIL_USER}" "${auth}"`);
+    state.lastImapOk = Date.now();   // 授权码还活着的证据，坏的时候用来算"多久没连上"
     await imap.cmd('SELECT INBOX');
     // 不再依赖"未读"标记（别的客户端预览一下就会把信标已读，她就不回了）：
     // 每次扫最近 20 封，靠 UID + Message-ID 去重
@@ -1351,7 +1352,18 @@ async function main() {
     ensureLock();   // 锁要是被别人删了，这一轮补回来
     let failed = false;
     try { await Promise.race([tick(config, state, auth, apiKey), sleep(150000).then(() => { throw new Error('这一轮超过 150 秒，放弃'); })]); }
-    catch (e) { failed = true; log('这一轮出错：' + e.message); await alertOnce('tick', '收信这一轮连续出错：' + e.message); }
+    catch (e) {
+      failed = true;
+      const msg = String((e && e.message) || e);
+      log('这一轮出错：' + msg);
+      // 认证失败跟"网络抖一下"不是一回事：授权码废了就只能他去重新生成，所以单独说清楚
+      if (/LOGIN|AUTHENTICATIONFAILED|AUTHENTICATE|\bAUTH\b|invalid credentials/i.test(msg)) {
+        const last = state.lastImapOk ? new Date(state.lastImapOk).toLocaleString('zh-CN', { timeZone: TZ, hour12: false }) : '（没有记录）';
+        await alertOnce('auth', '她的邮箱登录不上了。\n\n报错：' + msg + '\n上次登录成功：' + last + '\n\n多半是授权码失效了——改过 QQ 密码、关过 IMAP 服务、或者在邮箱设置里删过授权码，都会这样。\n\n重新生成：mail.qq.com → 设置 → 账号 → POP3/IMAP/SMTP 服务 → 生成授权码；拿到后替换 mailbot 目录下的 mail-auth.dat（或者告诉我，我来换）。\n\n在授权码修好之前，她收不到信、也回不了。', 12 * 3600 * 1000);
+      } else {
+        await alertOnce('tick', '收信这一轮连续出错：' + msg);
+      }
+    }
     beat();
     try { await flushOutbox(config, state, auth); }
     catch (e) { log('发送队列出错：' + e.message); await alertOnce('send', '发信出错了：' + e.message); }
