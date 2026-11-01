@@ -118,6 +118,8 @@ node mailbot.mjs            # 常驻
 
 Windows 上想再加一层保险（进程卡死也能拉起来）：用 `watchdog.ps1`，文件头有注册命令，每 10 分钟查一次心跳。
 
+想知道怎么做到**开机启动不闪黑框**的：用 `run-mailbot.vbs` / `run-watchdog.vbs` 这两个壳，注册任务时让 `wscript.exe` 去跑它们，窗口样式是 0（完全隐藏）。直接让任务跑 `.cmd` 或 `powershell.exe`，多数机器上会闪一下。
+
 ### 凭据怎么拿
 
 - **authCode**：QQ 邮箱 → 设置 → 账户 → 开启 IMAP/SMTP → 生成授权码（16 位，**不是登录密码**）。Gmail/Outlook 同理，用应用专用密码。
