@@ -1,6 +1,6 @@
 ﻿# mail-penpal 体检：一次看清她现在的状态
 $ErrorActionPreference = 'SilentlyContinue'
-$dir = 'E:\1\qq-stack\mailbot'
+$dir = if ($env:MAILBOT_DIR) { $env:MAILBOT_DIR } else { Join-Path $env:USERPROFILE 'mailbot' }   # 用环境变量 MAILBOT_DIR 指过去
 
 Write-Host "== 进程 ==" -ForegroundColor Cyan
 $procs = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'mailbot.mjs' })
