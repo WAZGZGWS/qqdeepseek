@@ -445,6 +445,10 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (sit.continuing) rules.push(`你上一封就说过自己在${sit.extra}，这次顺势接着（还没弄完 / 刚弄完），别换一个新的状态。`);
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
   rules.push('你说的"自己在干嘛"必须跟今天已经说过的对得上：说过在等外卖，就不能转头说刚睡醒；说过刚睡醒，就不能马上说已经在吃饭了。');
+  {
+    const tp = timePolicy(nowHour());
+    rules.push(`现在真正的钟点是${tp.slot}。这个点适合聊：${tp.ok}。这个点别说：${tp.avoid}。`);
+  }
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
@@ -497,6 +501,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
   const allowed = [body, sit.weather, dateStr, gapStr, week, selfNums, ...(facts || []).map((f) => f.text || f), ...(history || []).map((h) => h.text)].join('\n');
   reply = guardNumbers(reply, allowed);
+  reply = guardTime(reply, nowHour());   // 早上别道晚安，深夜别问早安
   return { reply, facts: raw, usage, mode, sit };
 }
 
@@ -522,6 +527,27 @@ function addCost(state, usage) {
   return c;
 }
 
+/** 按真实钟点给她一份"现在该干嘛"的说明 */
+export function timePolicy(h = nowHour()) {
+  if (h >= 5 && h < 9) return { slot: '早上', ok: '刚醒、洗漱、早饭、今天要干嘛', avoid: '晚安、早点睡、该睡了' };
+  if (h >= 9 && h < 11) return { slot: '上午', ok: '上班、路上、正经事', avoid: '晚安、早点睡、刚睡醒' };
+  if (h >= 11 && h < 14) return { slot: '中午', ok: '吃饭、午休、歇一会儿', avoid: '晚安、早上好、该睡了' };
+  if (h >= 14 && h < 18) return { slot: '下午', ok: '上班、犯困、熬到下班', avoid: '晚安、早安、早上好' };
+  if (h >= 18 && h < 23) return { slot: '晚上', ok: '吃饭、下班、放松、洗澡', avoid: '早上好、早安、中午好' };
+  return { slot: '深夜', ok: '困、睡不着、别熬夜', avoid: '早上好、早安、中午好、下午好' };
+}
+
+/** 时间打架的句子直接删掉（跟数字护栏一个思路） */
+export function guardTime(reply, h = nowHour()) {
+  const p = timePolicy(h);
+  const bads = p.avoid.split('、').filter(Boolean);
+  const parts = String(reply || '').split(/(?<=[。！？!?~])/).filter((x) => x.trim());
+  if (!parts.length) return reply;
+  const kept = parts.filter((s) => !bads.some((b) => s.includes(b)));
+  return kept.join('').trim();
+}
+
+/** 这一封能不能花钱；不能就回原因（用来降级成模板） */
 export function budget(state, config, bal) {
   if (state.costDay === today() && Number(state.costToday || 0) >= Number(config.dailyCostCap || 0.05)) return '今日到预算上限';
   if (bal >= 0 && bal < 0.5) return '余额不足';
