@@ -668,7 +668,8 @@ async function askModel({ apiKey, history, body, facts, state }) {
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n先回他这封信里说的那件事——记忆、天气、"你在干嘛"都只能顺口带一句，不能盖过他的话题，更别答非所问。直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，每条不超过 20 字、最多三条；只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
 如果这封信里提到了你的生日（不管是他在问，还是你自己顺嘴说到"我几月几号生日"），而你还没有生日，就再单独写一行「#我: 生日 M-D」把它定下来——只定这一次，之后不许改口。）` },
   ];
-  const budget = mode === 'short' ? 160 : mode === 'long' ? 520 : 380;
+  // short 也要装得下「正文 + #记忆 行」：160 不够，正文写满就把记忆行挤掉了
+  const budget = mode === 'short' ? 240 : mode === 'long' ? 520 : 380;
   let out = await callModel(apiKey, msgs, budget);
   let parsed0 = splitSelf(out.text);
   let parsed = splitMemory(parsed0.text);
@@ -681,8 +682,12 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (!parsed.text.trim()) {
     // 极短模式偶尔把预算全用在「#记忆」那行上，正文是空的。
     // 这时候再要一次，明确只要正文——比发一句模板话给她强。
-    const again = await callModel(apiKey, [...msgs, { role: 'user', content: '刚才那条只有记忆行没有正文。这次只写回信，不要写记忆行。' }], Math.max(budget, 200));
-    parsed = splitMemory(again.text);
+    const again = await callModel(apiKey, [
+      ...msgs,
+      { role: 'assistant', content: out.text || '（空）' },   // 补上他刚才那条，不然上下文里没有「刚才那条」
+      { role: 'user', content: '刚才那条只有记忆行没有正文。这次只写回信，不要写记忆行。' },
+    ], Math.max(budget, 240));
+    parsed = splitMemory(splitSelf(again.text).text);   // 重试也要认「#我: 生日」，别把它丢了
     usage = { prompt_tokens: (usage.prompt_tokens || 0) + (again.usage.prompt_tokens || 0), completion_tokens: (usage.completion_tokens || 0) + (again.usage.completion_tokens || 0) };
   }
   const { text, facts: raw } = parsed;
