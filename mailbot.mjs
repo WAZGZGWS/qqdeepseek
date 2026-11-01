@@ -1128,6 +1128,7 @@ async function main() {
   if (!Array.isArray(state.me.likes)) state.me.likes = SELF_DEFAULTS.likes.slice();
   if (!Array.isArray(state.me.dislikes)) state.me.dislikes = SELF_DEFAULTS.dislikes.slice();
   if (!Array.isArray(state.me.habits)) state.me.habits = SELF_DEFAULTS.habits.slice();
+  if (!state.firstSeen) { const rows = listEntries(); if (rows.length) state.firstSeen = rows[0].at; }
   saveState(state);   // 立刻落盘，别只在内存里
   MAIL_USER = String(config.email || process.env.MAILBOT_EMAIL || MAIL_USER).trim();
   const tryDat = (f) => { try { return fs.existsSync(f) ? decrypt(f) : ''; } catch { return ''; } };
