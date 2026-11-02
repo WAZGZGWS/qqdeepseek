@@ -777,7 +777,7 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
   const asked = (history || []).filter((h) => h.role === 'assistant').slice(-3)
     .flatMap((h) => String(h.text || '').split(/(?<=[。！？!?~])/))
     .filter((s) => /[？?]/.test(s)).map((s) => s.trim()).slice(-3);
-  if (asked.length) rules.push(`这些你最近刚问过，别再重复问：${asked.join(' / ')}`);
+  if (asked.length) rules.push(`这些你最近刚问过，这封一律别再问：${asked.join(' / ')}。他答过的事别当没听见——同一件事问第二遍最让人烦。`);
 
   // 历史分两段：最近 3 轮给全文，更早的压成一行摘要（放 system 里，不占对话轮次）
   const histAll = (history || []).slice(-MAX_HISTORY);
@@ -1539,7 +1539,8 @@ async function tick(config, state, auth, apiKey) {
       }
       // 一口气发了几封：合成一封回，别刷屏
       const merged = {
-        body: batch.length === 1 ? batch[0].body : batch.map((b, i) => `（第 ${i + 1} 封）\n${b.body}`).join('\n\n'),
+        // 合并只用空行隔开，不编号：编号会被当成正文，害她说重复的话、跑题检测也误报
+        body: batch.length === 1 ? batch[0].body : batch.map((b) => String(b.body || '').trim()).join('\n\n'),
         subject: batch[0].subject,
         fromAddr: batch[0].fromAddr,
         msgId: batch[batch.length - 1].msgId,
