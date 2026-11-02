@@ -632,6 +632,8 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
   if (heavyMail) temp = 1.05;
   else if (playfulMail) temp = 1.35;
   if (sleepy) temp = Math.min(temp, 1.15);
+  // 越熟越放得开：每满 30 天 +0.02，最多 +0.12（他同意的自适应）
+  temp = Math.min(1.4, temp + Math.min(0.12, Math.floor(daysTogether(state) / 30) * 0.02));
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
   const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 3);
   // 时段只认 timePolicy 一个口径：原来这里另算一套边界，5 点会同时出现"半夜"和"早上"
@@ -708,6 +710,12 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
     if (plan && plan.text && Date.now() - plan.at < 3 * 86400000) {
       rules.push(`你前几天说过「${plan.text}」。这封要是正好提到那天的事，别跟它对不上；不用特意提。`);
     }
+  }
+  // 偶尔提一句"第一次"：认识越久越有分量
+  if (state.firstSeen && Math.random() < 0.12) {
+    const d = new Date(state.firstSeen);
+    const day = daysTogether(state);
+    rules.push(`你们第一次通信是 ${d.getMonth() + 1} 月 ${d.getDate()} 日，今天是第 ${day} 天。这封要是自然，可以顺口提一句第一次，别煽情。`);
   }
   // 他答应过的事：隔了一天以上，可以问一句办得怎么样；他又提了就算兑现
   {
@@ -1084,6 +1092,26 @@ function monthKey(offset = 0) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit' }).format(d);
 }
 
+/** 他的作息：从日志里数"收到来信"的钟点，取最常写的两个 */
+function updateHisHours(state) {
+  try {
+    if (state.lastHoursAt && Date.now() - state.lastHoursAt < 20 * 3600 * 1000) return;
+    const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter((l) => l.includes('收到来信正文'));
+    const buckets = new Map();
+    for (const l of lines.slice(-300)) {
+      const m = l.match(/\[(\d{4}\/\d{1,2}\/\d{1,2}) (\d{1,2}):/);
+      if (!m) continue;
+      const h = Number(m[2]);
+      if (h < 6 || h > 23) continue;
+      buckets.set(h, (buckets.get(h) || 0) + 1);
+    }
+    state.hisHours = [...buckets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([h]) => h);
+    state.lastHoursAt = Date.now();
+    if (state.hisHours.length) log('他常在 ' + state.hisHours.join('、') + ' 点写信，主动来信的窗口跟着挪');
+    saveState(state);
+  } catch (e) { log('统计作息失败：' + e.message); }
+}
+
 /** 每隔一阵子，她给未来的他留一封短信，排到几天后再寄 */
 async function maybeFutureLetter({ apiKey, config, state, auth }) {
   const cfg = config.future || {};
@@ -1146,7 +1174,16 @@ async function maybeSummaries(apiKey, config, state, auth) {
 export function proactivePlan(state, cfg) {
   const day = today();
   if (state.proactivePlan && state.proactivePlan.day === day) return state.proactivePlan;
-  const wins = Array.isArray(cfg.windows) && cfg.windows.length ? cfg.windows : [String(cfg.time || '20:30') + '-' + String(cfg.time || '20:30')];
+  // 有他的作息数据就跟着挪：他常写的钟点 +1 小时，写成一个一小时的窗口
+  let wins = Array.isArray(cfg.windows) && cfg.windows.length ? cfg.windows : [String(cfg.time || '20:30') + '-' + String(cfg.time || '20:30')];
+  if (cfg.autoWindows !== false && Array.isArray(state.hisHours) && state.hisHours.length) {
+    // 只取 +1 点后还在安静时段之前的；去重，别整出两个一样的窗口
+    const auto = [...new Set(state.hisHours
+      .filter((h) => h >= 6 && h + 1 <= 22)
+      .map((h) => String(h + 1).padStart(2, '0') + ':00-' + String(Math.min(22, h + 2)).padStart(2, '0') + ':00'))];
+    if (auto.length) wins = auto.concat(wins);
+    wins = [...new Set(wins)].slice(0, Number(cfg.maxPerDay || 2));
+  }
   const max = Number(cfg.maxPerDay || wins.length);
   const items = [];
   for (const w of wins.slice(0, max)) {
@@ -1734,6 +1771,7 @@ async function main() {
     catch (e) { log('发送队列出错：' + e.message); await alertOnce('send', '发信出错了：' + e.message); }
     beat();
     try { await maybeProactive(apiKey, config, state, auth); } catch (e) { log('主动来信出错：' + e.message); }
+    try { updateHisHours(state); } catch (e) { log('统计作息出错：' + e.message); }
     try { await maybeSummaries(apiKey, config, state, auth); } catch (e) { log('写回顾出错：' + e.message); }
     try { await maybeFutureLetter({ apiKey, config, state, auth }); } catch (e) { log('未来信出错：' + e.message); }
     // 每天审计一次长期事实，把没依据的自动清掉（清掉的会留档）
