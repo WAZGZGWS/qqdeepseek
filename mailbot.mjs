@@ -585,9 +585,9 @@ function bannedParticles(state) {
 /** 长度模式：三成短、六成中、一成多 */
 function lengthMode() {
   const r = Math.random();
-  if (r < 0.2) return 'short';    // 只回两三个字的概率调低了，别老显得敷衍
-  if (r < 0.8) return 'normal';
-  return 'long';                  // 长回复概率提到 20%，允许她多说
+  if (r < 0.25) return 'short';
+  if (r < 0.9) return 'normal';
+  return 'long';                  // 长信只留 10%，他说太长不看
 }
 
 async function askModel({ apiKey, history, body, facts, state }) {
@@ -604,7 +604,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   else if (playfulMail) temp = 1.35;
   if (sleepy) temp = Math.min(temp, 1.15);
   const fs2 = (facts || []).slice(-20).map((f) => '- ' + (f.text || f)).join('\n');
-  const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 6);
+  const hint = (state && state.__memoryOff) ? '' : memoryHint(body, 3);
   // 时段只认 timePolicy 一个口径：原来这里另算一套边界，5 点会同时出现"半夜"和"早上"
   const tp = timePolicy(nowHour());
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date().getDay()];
@@ -633,12 +633,12 @@ async function askModel({ apiKey, history, body, facts, state }) {
   if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
   if (/(累|难受|崩溃|撑不住|哭|病|疼|委屈|吵架|分手)/.test(String(body || ''))) rules.push('他这封在说难受的事：先接他的话，别急着说自己刚在干嘛。');
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
-  rules.push('你说的"自己在干嘛"必须跟今天说过的对得上：说过在等外卖，就不能转头说刚睡醒；说了刚睡醒，就别在同一封里说已经吃过、已经出门。');
+  rules.push('今天说过的状态别反口：说在等外卖就不能说刚睡醒，说刚睡醒就别提着出门。');
   {
     // 她自己说过的话要有账本：最近三封说过在干嘛 + 上一封的状态，免得她反问"我啥时候说过了"
     const said = (state.recentExtras || []).slice(-3).join('、');
     const last = state.lastSituation && state.lastSituation.extra ? `，上一封是「${state.lastSituation.extra}」` : '';
-    if (said || last) rules.push(`你最近几封说过自己在：${said || '没说'}${last}。说过就是说过，想不起来也别否认说"我没说过"。`);
+    if (said || last) rules.push(`最近说过自己在：${said || '没说'}${last}。说过就是说过，别否认。`);
   }
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
@@ -719,7 +719,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
   // 诊断（确认事实链路后可以删）：分清楚"模型没写记忆行"和"写了但被 30 字上限丢掉"
   if (parsed.dropped && parsed.dropped.length) log('事实被丢弃 ' + parsed.dropped.length + ' 条（超过 30 字）：' + parsed.dropped.join(' / '));
   else if (!raw.length && /(记忆|记住)[:：]/.test(out.text)) log('模型写了记忆行，但没有可用事实');
-  const cap = mode === 'short' ? (sleepy ? 30 : 24) : mode === 'long' ? 320 : 220;
+  const cap = mode === 'short' ? (sleepy ? 30 : 24) : mode === 'long' ? 220 : 220;
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
@@ -1125,7 +1125,11 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
   if (facts.length > grounded.length) log(`过滤掉 ${facts.length - grounded.length} 条没有依据的"事实"`);
 
   const subj = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
-  const dueAt = Date.now() + sendDelayMs(mode === 'template', String(config.replyDelay || 'human'));
+  // 偶尔她也在忙：5% 的信拖 3~15 小时才发（不额外发通知，本来就是她自己写的）
+  const rareBusy = mode !== 'template' && Math.random() < 0.05;
+  const busyMs = rareBusy ? (3 + Math.random() * 12) * 3600 * 1000 : 0;
+  if (rareBusy) log('她这会儿忙，这封压到 ' + Math.round(busyMs / 3600000) + ' 小时后再发');
+  const dueAt = Date.now() + busyMs + sendDelayMs(mode === 'template', String(config.replyDelay || 'human'));
   enqueue(state, {
     dueAt, to: config.owner || fromAddr, subject: subj, text,
     inReplyTo: msgId || undefined,
