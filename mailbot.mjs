@@ -709,6 +709,17 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       rules.push(`你前几天说过「${plan.text}」。这封要是正好提到那天的事，别跟它对不上；不用特意提。`);
     }
   }
+  // 他答应过的事：隔了一天以上，可以问一句办得怎么样；他又提了就算兑现
+  {
+    const ps = (state.hisPromises || []).filter((p) => Date.now() - p.at < 7 * 86400000);
+    const done = ps.find((p) => similarity(p.text, body) >= 0.45);
+    if (done) state.hisPromises = (state.hisPromises || []).filter((p) => p !== done);
+    const ask = (state.hisPromises || []).filter((p) => Date.now() - p.at > 20 * 3600 * 1000).slice(-1)[0];
+    if (ask) {
+      const days = Math.max(1, Math.round((Date.now() - ask.at) / 86400000));
+      rules.push(`他${days}天前说「${ask.text}」。可以顺口问一句办得怎么样了；不自然就别问。`);
+    }
+  }
   // 她答应过的事：有就提一句，超过 7 天没兑现就当忘了（别一直念）
   {
     const ps = (state.promises || []).filter((p) => Date.now() - p.at < 7 * 86400000);
@@ -1228,6 +1239,19 @@ async function processOne({ body, subject, fromAddr, msgId, refs, hasAttach, con
     state.outbox = state.outbox.filter((o) => o.id !== pending.id);
     saveState(state);
     log('上一封还没发出去，他补了一封，合成一封回');
+  }
+  // 他答应过的事：明天/周末/下周 + 一件具体的事
+  {
+    const re = /(?:我)?(?:明天|后天|周末|下周|回头|过两天)[^。！？\n]{2,18}/g;
+    const got = [...String(body || '').matchAll(re)]
+      .map((m) => m[0].trim().slice(0, 30))
+      .filter((t) => !(/你/.test(t) && !/我/.test(t)))   // 「明天你得早点睡」是他在管她，不是他的承诺
+      .filter((t) => !/再说吧|再说$/.test(t))          // 「回头再说吧」不算答应
+      .slice(0, 2);
+    if (got.length) {
+      const keep = (state.hisPromises || []).filter((p) => Date.now() - p.at < 7 * 86400000).slice(-3);
+      state.hisPromises = keep.concat(got.map((t) => ({ at: Date.now(), text: t }))).slice(-4);
+    }
   }
   const kind = templateKind(body);
   const why = budget(state, config, bal);
