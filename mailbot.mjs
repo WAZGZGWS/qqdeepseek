@@ -682,6 +682,14 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       rules.push(`你自己的状态：${when}那封是「${diary[diary.length - 1].mood}」${diary.length > 1 ? '，再上一封是「' + diary[0].mood + '」' : ''}。语气可以有起伏，但别突然换个人。`);
     }
   }
+  // 她答应过的事：有就提一句，超过 7 天没兑现就当忘了（别一直念）
+  {
+    const ps = (state.promises || []).filter((p) => Date.now() - p.at < 7 * 86400000);
+    const hit = ps.find((p) => similarity(p.text, body) >= 0.45);
+    if (hit) state.promises = (state.promises || []).filter((p) => p !== hit);   // 他已经问到这件事，算兑现
+    const left = (state.promises || []).filter((p) => Date.now() - p.at < 7 * 86400000).slice(-1)[0];
+    if (left) rules.push(`你前几封说过「${left.text}」。这封要是自然，就兑现一句或者提一下；不自然就别硬扯。`);
+  }
   // 旧事重提：四封里有一封，能想起一件 20 天前的事
   if (Math.random() < 0.25) {
     try {
@@ -893,6 +901,15 @@ function enqueue(state, item) {
 }
 
 /** 到点了就发。发成功才记历史、记记忆、加计数 */
+/** 从她自己的话里抓"我答应过的事"：我明天… / 回头给你… / 下次再聊… */
+function extractPromises(text) {
+  const t = String(text || '');
+  const out = [];
+  const re = /我(?:明天|后天|回头|下次|改天|过两天|晚点)[^。！？\n]{2,18}|(?:明天|回头|下次|改天)[^。！？\n]{0,10}(?:给你|跟你说|再聊|告诉你|讲给你)/g;
+  for (const m of t.matchAll(re)) out.push(String(m[0]).trim().slice(0, 30));
+  return out.slice(0, 2);
+}
+
 async function flushOutbox(config, state, auth) {
   const box = state.outbox || [];
   if (!box.length) return 0;
@@ -925,6 +942,15 @@ async function flushOutbox(config, state, auth) {
     state.lastEmotion = item.emotion || state.lastEmotion;
     // 她自己的日记：一封一条，只留最近 6 条（不发出去，只给她自己下次看）
     state.meDiary = (state.meDiary || []).concat([{ at: Date.now(), mood: item.emotion || emotionOf(item.text) }]).slice(-6);
+    // 她自己答应过的事：只记 7 天内的，最多 3 条
+    {
+      const fresh = extractPromises(item.text);
+      if (fresh.length) {
+        const keep = (state.promises || []).filter((p) => Date.now() - p.at < 7 * 86400000).slice(-3);
+        state.promises = keep.concat(fresh.map((t) => ({ at: Date.now(), text: t }))).slice(-4);
+        log('她答应了：' + fresh.join(' / '));
+      }
+    }
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
     if (item.extra) state.lastSituation = { extra: item.extra, at: Date.now() };   // 下一封可以接着这个状态
     state.recentWeather = (state.recentWeather || []).concat([!!item.weatherUsed]).slice(-4);
