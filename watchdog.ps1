@@ -22,7 +22,10 @@ $procs = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Objec
 $alive = ($procs.Count -gt 0)
 $fresh = (($now - $last) -lt $staleMs)
 
-if ($alive -and $fresh) { exit 0 }
+# Heartbeat is the source of truth. Get-CimInstance can report no process even
+# while she is alive (it happened twice on 2026-11-01: alive=False fresh=True,
+# and the watchdog restarted a second copy). Only restart when the beat is old.
+if ($fresh) { exit 0 }
 
 Write-Log ("stale detected: alive=$alive fresh=$fresh lastbeat=$last")
 
