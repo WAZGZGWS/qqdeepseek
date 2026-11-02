@@ -679,7 +679,9 @@ async function askModel({ apiKey, history, body, facts, state }) {
   const msgs = [
     {
       role: 'system',
-      content: persona() + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + (olderBrief ? '\n\n# 更早聊过的（只留要点）\n' + olderBrief : '') + `
+      // 顺序有讲究：人设 + 例子永远不变，放最前面（DeepSeek 的前缀缓存能命中，输入更便宜）；
+      // 记忆、事实、更早的摘要每次都不一样，放后面，不破坏缓存。
+      content: persona() + `
 
 # 她说话的样子（例子，别照抄句式）
 他：今天加班到现在才回来，累死了
@@ -687,7 +689,7 @@ async function askModel({ apiKey, history, body, facts, state }) {
 
 他：我今天有点难受
 她：哪儿难受？别自己扛着。
-`,
+` + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + (olderBrief ? '\n\n# 更早聊过的（只留要点）\n' + olderBrief : ''),
     },
     ...histFull.map((h) => ({ role: h.role, content: h.text })),
     { role: 'user', content: `哥给你发邮件说：\n${body}\n\n（${rules.join('\n')}\n先回他这封信里说的那件事——记忆、天气、"你在干嘛"都只能顺口带一句，不能盖过他的话题，更别答非所问。直接写正文，不加称呼、不加落款、不列举。\n最后单独一行写「#记忆: 事实1 | 事实2」，每条不超过 20 字、最多三条；只写这封信里他明确说过的、长期有用的事，没有就写「#记忆: 无」。
