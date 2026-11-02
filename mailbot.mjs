@@ -91,7 +91,7 @@ export function loadState(def) {
 
 /** 出问题时通知主人（同类两小时只发一封，别刷他信箱） */
 let CTX = { auth: null, config: null, state: null };
-async function alertOnce(code, text, windowMs = 2 * 3600 * 1000) {
+async function alertOnce(code, text, windowMs = 24 * 3600 * 1000) {   // 同类故障一天最多一封，别轮着发
   try {
     const s = CTX.state;
     const c = CTX.config;
@@ -931,6 +931,7 @@ async function flushOutbox(config, state, auth) {
     state.recentParticles = (state.recentParticles || []).concat([PARTICLE_LIST.filter((p) => item.text.includes(p))]).slice(-5);
     if (item.his && !state.__memoryOff) { remember('he', item.his); remember('me', item.text); }
     state.outbox = state.outbox.filter((x) => x.id !== item.id);
+    if (state.alerts && state.alerts.send) delete state.alerts.send;   // 发信恢复正常，下次坏了再提醒
     saveState(state);
     sent += 1;
     log(`发出去了：${item.text.slice(0, 36)}${item.text.length > 36 ? '…' : ''}`);
@@ -1609,7 +1610,10 @@ async function main() {
     } catch (e) { log('事实审计出错：' + e.message); }
     }   // 收信这一支结束
     // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
-    if (!failed) fails = 0;
+    if (!failed) {
+      fails = 0;
+      if (state.alerts && (state.alerts.tick || state.alerts.crash)) { delete state.alerts.tick; delete state.alerts.crash; saveState(state); }
+    }
     if (fails >= 3) { log('连续 ' + fails + ' 轮出错，退出让守护进程重启（僵死只能这样清）'); process.exit(1); }
     poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
     nextPollAt = Date.now() + poll;   // 退避也算进去
