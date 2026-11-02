@@ -43,6 +43,14 @@ const beat = () => { try { fs.writeFileSync(HEARTBEAT, String(Date.now())); } ca
 let MAIL_USER = 'you@example.com';   // 真正的值由 config.json 的 mail.user（或 email）填进来   // 可被 config.mail.user 覆盖
 let IMAP = { host: 'imap.example.com', port: 993 };   // 换服务商只改 config.mail
 let SMTP = { host: 'smtp.example.com', port: 465 };   // 换服务商只改 config.mail
+// 节日表：公历的直接写 MM-DD，农历的按年写 YYYY-MM-DD。
+// TODO 2031 年起要补除夕/春节/中秋的新日期（每年核一次，别凭记忆填）。
+const HOLIDAYS = [
+  { key: 'newyear', name: '元旦', dates: ['01-01'] },
+  { key: 'eve', name: '除夕', dates: ['2026-02-16', '2027-02-05', '2028-01-25', '2029-02-12', '2030-02-02'] },
+  { key: 'spring', name: '春节', dates: ['2026-02-17', '2027-02-06', '2028-01-26', '2029-02-13', '2030-02-03'] },
+  { key: 'midautumn', name: '中秋', dates: ['2026-09-25', '2027-09-15', '2028-10-03', '2029-09-22', '2030-09-12'] },
+];
 const POLL_MS = 100 * 1000;   // 正常轮询间隔；失败会退避，最长 10 分钟
 const MAX_HISTORY = 10;   // 折中：8 条时她容易"我啥时候说过"，12 条每封多烧 80 字
 const MAX_INCOMING = 1200;
@@ -878,7 +886,7 @@ async function flushOutbox(config, state, auth) {
 }
 
 /** 周记 / 年记：从原文档案里翻这段时间的记录，写一封回顾 */
-async function writeDigest({ apiKey, config, state, auth, kind, dry = false }) {
+async function writeDigest({ apiKey, config, state, auth, kind, dry = false, holiday = '' }) {
   const cfg = config.summary || {};
   const isHisBday = kind === 'birthday';
   const isHerBday = kind === 'herBirthday';
@@ -899,13 +907,18 @@ async function writeDigest({ apiKey, config, state, auth, kind, dry = false }) {
     : kind === 'monthly'
       ? { what: '这个月', title: '月记', chars: '80~120 字', tokens: 400, cap: 300,
           styles: ['挑两件事说说，别的略过', '带点吐槽，把他这个月让你无语的地方写进去', '只讲一件这个月你最记得的事，其它不提'] }
-      : isHisBday
+      : kind === 'holiday'
+        ? { what: '节日', title: '节日信', chars: '60~120 字', tokens: 400, cap: 300,
+            styles: ['说说你今天怎么过的，别写祝福套话', '带点吐槽（月饼难吃、亲戚太多、外面太挤）', '只提一件今天发生的小事，再问一句他那边'] }
+        : isHisBday
         ? { what: '生日', title: '生日贺报', chars: '50~90 字', tokens: 350, cap: 260,
             styles: ['像随口说一句生日快乐，别煽情', '带点小吐槽，别肉麻', '说一件你记得的他的小事，再祝一句'] }
         : { what: '我的生日', title: '我的生日', chars: '60~90 字', tokens: 350, cap: 260,
             styles: ['像随口提一句今天是我生日，可以跟他要点什么', '带点小得意，让他说句好听的', '平平淡淡说一句，别撒娇过头'] };
   const style = spec.styles[Math.floor(Math.random() * spec.styles.length)];
-  const intro = isHisBday
+  const intro = kind === 'holiday'
+    ? `今天是${holiday || '节日'}。你给哥写封短信，说你今天怎么过的——用你自己的角度，别写拜年话、别群发式祝福。你记得关于他的事：\n${facts || '（没什么特别的）'}`
+    : isHisBday
     ? `今天是哥的生日。你给他写一封短贺报，不用回顾聊天记录。你记得关于他的事：\n${facts || '（没什么特别的）'}`
     : isHerBday
       ? `今天是你的生日（${state.me && state.me.birthday ? state.me.birthday : ''}）。你给哥写封短信告诉他今天是你的生日，不用回顾聊天记录。你记得关于他的事：\n${facts || '（没什么特别的）'}`
@@ -956,6 +969,13 @@ async function maybeSummaries(apiKey, config, state, auth) {
   const bd = String(config.birthday || cfg.birthday || '').trim();
   if (cfg.birthday !== false && /^\d{2}-\d{2}$/.test(bd) && bd === md && hhmm >= (cfg.birthdayTime || '08:00') && Number(state.lastBirthdayYear) !== now.getFullYear()) {
     await writeDigest({ apiKey, config, state, auth, kind: 'birthday' });
+  }
+  // 节日：元旦/除夕/春节/中秋，当天早上发，同一天只发一次
+  const hol = HOLIDAYS.find((h) => h.dates.includes(ymd) || h.dates.includes(md));
+  const holKey = hol ? hol.key + '-' + ymd.slice(0, 4) : '';
+  if (cfg.holiday !== false && hol && hhmm >= (cfg.holidayTime || '09:00') && state.lastHolidayKey !== holKey) {
+    state.lastHolidayKey = holKey;
+    await writeDigest({ apiKey, config, state, auth, kind: 'holiday', holiday: hol.name });
   }
   // 她自己的生日：她自己定下来的那天（state.me.birthday），早上发一封告诉他
   const herBd = state.me && state.me.birthday ? String(state.me.birthday) : '';
