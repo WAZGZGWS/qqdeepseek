@@ -149,6 +149,25 @@ Windows 上想再加一层保险（进程卡死也能拉起来）：用 `watchdo
 | `summary.yearly` | 要不要写年度总结（默认 true），12-31 晚上自动发 |
 | `proactive` | 主动写信。用 `windows` 选时间段，如 `"07:10-10:50"`；想让她只在部分日子写就加概率后缀：`"21:05-22:20*0.35"`（三成日子）。`maxPerDay` 每天最多几封，`minGapHours` 刚聊过就别写，`quietFrom`/`quietTo` 安静时段 |
 
+## 怎么装
+
+**傻瓜式（推荐，三分钟）**：装好 Node 20 以上，在这个目录里跑
+
+```
+node setup.mjs
+```
+
+它会依次：查 Node 版本 → 装依赖 → 问你四个字段写进 `config.json` → 跑一次自检（登录信箱，不调模型不花钱）。
+
+剩两步手动，因为它涉及权限、每台机器不一样：
+
+1. 想开机自启：把 `run-mailbot.vbs` 放进「启动」文件夹，或注册一个计划任务；
+2. 先写一封信试：`node mailbot.mjs --once`。
+
+**手动装**：`npm install` → 复制 `config.example.json` 成 `config.json` 填字段 → `node mailbot.mjs --test`。
+
+换邮箱服务商只改 `config.json` 的 `mail` 段（默认 QQ），不用动代码。
+
 ## 谁在做这个
 
 她不是一次做完的。第 1 代（d 老师）把她搭起来，第 2 代（**d 小子**）接手修补：体检、修 bug、加节日信、把仓库脱敏。以后每一代接手的人，都会在 [GENERATIONS.md](GENERATIONS.md) 里留一行——你手上这份是谁修的，能查到。
