@@ -682,6 +682,21 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       rules.push(`你自己的状态：${when}那封是「${diary[diary.length - 1].mood}」${diary.length > 1 ? '，再上一封是「' + diary[0].mood + '」' : ''}。语气可以有起伏，但别突然换个人。`);
     }
   }
+  // 借他的口头禅：他最近老用的词，偶尔借一个（三成的信）
+  if (Math.random() < 0.3) {
+    const words = Object.keys(state.hisWords || {});
+    const w = words[Math.floor(Math.random() * words.length)];
+    if (w && !String(body || '').includes('大肥鱼')) rules.push(`他最近老说「${w}」。这封可以借来用一次，别刻意。`);
+  }
+  // 真人在打字会改口：偶尔一处写错再顺手纠回来
+  if (Math.random() < 0.35) rules.push('如果这封里有一处说错，可以像打字一样自己改口（"周三——不对，周四"），最多一处，别每封都用。');
+  // 他今天的心情：低落的别追问、别抖机灵；兴奋的可以跟着起哄
+  {
+    const low = /(累|难受|烦|压力|加班|吵架|病|疼|撑|无聊|没意思|不想|唉)/.test(String(body || ''));
+    const high = /(哈哈|笑|开心|太好了|终于|爽|牛|恭喜|赢了|好耶)/.test(String(body || ''));
+    if (low) rules.push('他这封听着有点低落：话短一点，别追问，别说教，也别硬逗他。');
+    else if (high) rules.push('他这封挺高兴：可以跟着起哄、损他两句，别冷着。');
+  }
   // 抓字眼：从他这封信里截一句原话（4~12 字，不带标点），四成的信用上
   if (Math.random() < 0.4) {
     const phrase = (String(body || '').match(/[^。！？，,\n\s]{4,12}/) || [''])[0];
@@ -954,6 +969,17 @@ async function flushOutbox(config, state, auth) {
     state.lastEmotion = item.emotion || state.lastEmotion;
     // 她自己的日记：一封一条，只留最近 6 条（不发出去，只给她自己下次看）
     state.meDiary = (state.meDiary || []).concat([{ at: Date.now(), mood: item.emotion || emotionOf(item.text) }]).slice(-6);
+    // 他的口头禅：从这封信里数两字词，反复出现的才记（最多 8 个）
+    {
+      const stop = new Set(['今天', '明天', '昨天', '现在', '时候', '什么', '怎么', '可以', '一个', '我们', '他们', '这个', '那个', '还是', '已经', '就是', '因为', '所以', '但是', '如果', '然后', '有点', '不过', '知道', '觉得', '真的', '其实', '东西', '事情', '问题', '感觉', '地方', '一样', '这样', '那样', '的话', '起来', '出来', '过来', '下来', '还有', '没有', '不是', '不会', '这么', '那么', '自己', '一下', '一样']);
+      const w = state.hisWords || {};
+      for (const t of tokenize(String(item.his || ''))) {
+        if (t.length !== 2 || stop.has(t)) continue;
+        w[t] = Number(w[t] || 0) + 1;
+      }
+      // 只留出现两次以上的，最多 8 个
+      state.hisWords = Object.fromEntries(Object.entries(w).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8));
+    }
     // 她随口说的"今天/明天要干嘛"：只留最新一条，用来防上下封信互相打架
     {
       const pm = String(item.text || '').match(/(今天|明天|后天)(要|得|准备|打算)?[^。！？\n]{2,12}/);
