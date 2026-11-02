@@ -711,6 +711,12 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       rules.push(`你前几天说过「${plan.text}」。这封要是正好提到那天的事，别跟它对不上；不用特意提。`);
     }
   }
+  // 他纠正过的事：一条都别再犯；如果是这封信里刚说的，先认一句
+  {
+    const cor = (state.corrections || []).filter((c) => Date.now() - c.at < 60 * 86400000).slice(-3);
+    if (cor.length) rules.push(`他纠正过你：${cor.map((c) => '「' + c.text + '」').join('、')}。别再犯。`);
+    if (cor.some((c) => Date.now() - c.at < 5 * 60 * 1000)) rules.push('他刚纠正你的，先认一句（"知道了""行吧"），别顶回去，也别道歉一大段。');
+  }
   // 偶尔提一句"第一次"：认识越久越有分量
   if (state.firstSeen && Math.random() < 0.12) {
     const d = new Date(state.firstSeen);
@@ -824,7 +830,7 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
   // 诊断（确认事实链路后可以删）：分清楚"模型没写记忆行"和"写了但被 30 字上限丢掉"
   if (parsed.dropped && parsed.dropped.length) log('事实被丢弃 ' + parsed.dropped.length + ' 条（超过 30 字）：' + parsed.dropped.join(' / '));
   else if (!raw.length && /(记忆|记住)[:：]/.test(out.text)) log('模型写了记忆行，但没有可用事实');
-  const cap = mode === 'short' ? (sleepy ? 30 : 24) : mode === 'long' ? 220 : 220;
+  const cap = mode === 'short' ? (sleepy ? 30 : 24) : 220;   // long 和 normal 上限一样了，别留没用的三目
   let reply = humanize(text, cap);
   // 她自己的生日也算"允许的数字"——不然她说"6 月 17 日"会被护栏当成乱编删掉
   const selfNums = state && state.me && state.me.birthday ? state.me.birthday.replace('-', ' ') + ' ' + state.me.birthday.split('-').join(' 月 ') : '';
@@ -1290,6 +1296,16 @@ async function processOne({ body, subject, fromAddr, msgId, refs, hasAttach, con
       state.hisPromises = keep.concat(got.map((t) => ({ at: Date.now(), text: t }))).slice(-4);
     }
   }
+  // 他纠正过她的事："别叫我X""我讨厌Y"——记着，以后别再犯
+  {
+    const fixes = [...String(body || '').matchAll(/别(?:再)?(?:叫|说|提|用|催|问)[^。！？\n]{1,12}|(?:我)?(?:不喜欢|讨厌|受不了)[^。！？\n]{1,12}/g)]
+      .map((m) => m[0].trim().slice(0, 24));
+    if (fixes.length) {
+      const keep = (state.corrections || []).filter((c) => Date.now() - c.at < 60 * 86400000).slice(-4);
+      state.corrections = keep.concat(fixes.map((t) => ({ at: Date.now(), text: t }))).slice(-5);
+      log('他纠正过：' + fixes.join(' / '));
+    }
+  }
   const kind = templateKind(body);
   const why = budget(state, config, bal);
   const nightTpl = isNight() && body.length <= 10;
@@ -1732,7 +1748,7 @@ async function main() {
   // 安全阀：带了参数却一个都没匹配上（比如拼错 --weekly），不要傻傻地启动守护进程，
   // 否则会变成"第二个实例"跟正式服务抢同一个邮箱——这个坑真的踩过。
   if (args.length) {
-    console.error('没认出的参数：' + args.join(' ') + '\n可用：--once / --status / --test / --say <文本> / --proactive / --weekly / --yearly / --purge [--yes]');
+    console.error('没认出的参数：' + args.join(' ') + '\n可用：--once / --status / --test / --say <文本> / --proactive / --monthly / --yearly / --birthday / --her-birthday / --facts / --memory / --purge [--yes]');
     process.exit(2);
   }
 
