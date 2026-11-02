@@ -1377,7 +1377,9 @@ function ensureLock() {
     const raw = fs.readFileSync(LOCK, 'utf8').trim();
     if (raw === String(process.pid)) return;
     const old = Number(raw) || 0;
-    if (old && old !== process.pid) { try { process.kill(old, 0); return; } catch {} }   // 别的实例还活着，别抢
+    if (old && old !== process.pid) {
+      try { process.kill(old, 0); log('发现另一个实例在跑（pid ' + old + '），我这个退出'); process.exit(1); } catch {}
+    }   // 锁被别人占了且对方还活着 → 我退出，别制造两个实例抢信箱
   } catch {}
   try { fs.writeFileSync(LOCK, String(process.pid)); } catch {}
 }
@@ -1568,9 +1570,15 @@ async function main() {
   let poll = POLL_MS;
   let lastBeatLog = 0;
   let fails = 0;   // 连续失败轮数：僵死了就退出，让 run-loop 起个新的
+  let nextPollAt = Date.now();   // 下一次收信的时间点
   for (;;) {
     ensureLock();   // 锁要是被别人删了，这一轮补回来
     let failed = false;
+    const pollDue = Date.now() >= nextPollAt;
+    if (!pollDue) {
+      // 还没到收信的点，只是来发信的：只冲队列，不登录信箱（登录次数一天还是那么多次）
+      try { await flushOutbox(config, state, auth); } catch (e) { log('发送队列出错：' + e.message); }
+    } else {
     try { await Promise.race([tick(config, state, auth, apiKey), sleep(150000).then(() => { throw new Error('这一轮超过 150 秒，放弃'); })]); }
     catch (e) {
       failed = true;
@@ -1599,15 +1607,21 @@ async function main() {
         saveState(state);
       }
     } catch (e) { log('事实审计出错：' + e.message); }
+    }   // 收信这一支结束
     // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
     if (!failed) fails = 0;
     if (fails >= 3) { log('连续 ' + fails + ' 轮出错，退出让守护进程重启（僵死只能这样清）'); process.exit(1); }
     poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
+    nextPollAt = Date.now() + poll;   // 退避也算进去
     if (Date.now() - lastBeatLog > 25 * 60000) {
       lastBeatLog = Date.now();
       log(`在跑（上次${failed ? '出错' : '正常'}，下次 ${Math.round(poll / 1000)} 秒后，今天已回 ${state.count || 0} 封）`);
     }
-    await sleep(poll);
+    // 下一次醒：收信点 和 队列里最早一封到点 里更早的那个；最长睡 60 秒，保证心跳一直在跳
+    const nextDue = (state.outbox || []).reduce((m, o) => (o && o.dueAt ? Math.min(m, o.dueAt) : m), Infinity);
+    const waitMs = Math.max(2000, Math.min(60000, nextPollAt - Date.now(), Number.isFinite(nextDue) ? nextDue - Date.now() : 60000));
+    beat();
+    await sleep(waitMs);
   }
 }
 
