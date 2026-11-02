@@ -137,6 +137,8 @@
 
 ## 坑（都是真踩的）
 
+> **规矩：每次修完一个故障，往这张表加一行。** 不写下来，下次还得从头查一遍。
+
 | 坑 | 对策 |
 |---|---|
 | PowerShell 拼 JS/中文 | 永远写 `.mjs` 补丁文件再 `node` 跑 |
@@ -145,6 +147,10 @@
 | 手动起第二个实例 | 只经 `run-mailbot.vbs` 或计划任务；`--status` 报“已有实例”是锁在生效 |
 | 连不上 github.com:443 | 走 Contents API + token，见 `sanitize-and-publish` skill |
 | 授权码失效（改 QQ 密码、关 IMAP、删授权码都会触发，不是按天过期）| 日志连续“这一轮出错”且带 `LOGIN`；现在会单独发一封“登录不上了”，12 小时一次，带“上次登录成功”时间。去 mail.qq.com → 设置 → 账号 → IMAP 服务重新生成，替换 `mail-auth.dat` |
+| **每轮都“超过 150 秒”或“IMAP 读超时”** | 两个已踩过的原因：① 没等服务器 `* OK` 招呼就发 `LOGIN`，QQ 干脆不回（2026-11-02 晚，卡了 6 小时）；② **跑了多个实例**抢同一个信箱，被 QQ 限流。先数进程：`Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| ? { $_.CommandLine -match 'mailbot.mjs' }`，必须只有 1 个 |
+| **一堆 `cmd.exe` 在循环重起她** | 每次用 `Start-Process cmd /c run-loop.cmd` 起一次就多一个守循环，它们不会自己退。2026-11-02 晚积了 **27 个**，互相抢着 restart。清理：`Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" \| ? { $_.CommandLine -match 'run-loop.cmd' }` 全杀掉，只留一个 node |
+| 她不回信、日志却写着“还没认过门” | `state.secretOkAt` 丢了（state 被重置过）。补一个数字进 `state.json`，或让他重发带口令的信 |
+| `state.json` 从 5KB 变 981 字节、history/facts 归零 | 多个进程并发写同一个 `.tmp`（旧版 writeJson 的 bug，已改成唯一临时名）。恢复不了就认，记忆库 `memory.jsonl` 才是她的记忆 |
 | 火绒弹窗 | 让它把 `<mailbot 目录>` 加信任区 |
 
 ## 怎么验证她还是好的
