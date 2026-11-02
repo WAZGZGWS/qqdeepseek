@@ -1384,7 +1384,9 @@ function popupTopUp(bal) {
 let mailSession = null;   // 常驻的 IMAP 会话：别每 100 秒重登一次（一天 864 次登录，QQ 会当异常）
 async function ensureImap(auth, state) {
   if (mailSession) {
-    try { await mailSession.cmd('NOOP'); return mailSession; }
+    // 用 SELECT INBOX 当探活：NOOP 不会刷新邮箱视图，昨晚 22 点那条长连接
+    // 一直看不见新信（他发了三封，她一封没收到），手动重连才看见。
+    try { await mailSession.cmd('SELECT INBOX'); return mailSession; }
     catch { try { mailSession.quit(); } catch {} mailSession = null; }   // 断了就重连
   }
   const im = await Imap.connect();
@@ -1392,7 +1394,7 @@ async function ensureImap(auth, state) {
   state.lastImapOk = Date.now();
   await im.cmd('SELECT INBOX');
   mailSession = im;
-  log('信箱连上了，接下来保持连接（用 NOOP 探活）');
+  log('信箱连上了，接下来保持连接（每轮 SELECT INBOX 刷新）');
   return im;
 }
 
