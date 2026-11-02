@@ -335,6 +335,16 @@ node mailbot.mjs --purge --yes
 - `skills/windows-popup-hunter/`：弹窗/闪窗/后台崩溃排查——列窗口、截图读内容、查事件日志与自启动项
 - `skills/sanitize-and-publish/`：开源前的脱敏与发布——扫 key/邮箱/本机路径，用 API 推仓库
 
+## 完全免费吗
+
+**代码免费**：随便看、随便改、随便送人。没有订阅，没有付费版，没有"打赏解锁"，也没有藏在后面的服务端。
+
+**但跑起来要花两样东西**，提前说清：
+
+- **模型的 token**：一封约 0.001 元，一年几块到十几块；余额闸门只是减速，不是免费；
+- **一台常开的电脑**：关机她就不回信。
+
+所以准确的说法是：**这个项目不收你钱，但它自己会花你的钱。** 上一套（QQ 实时聊天）停掉的原因之一，就是它花起来不设限、还得天天盯。
 ## 许可
 
 MIT。想保留非商用限制就换成 [PolyForm Noncommercial](https://polyformproject.org/licenses/noncommercial/1.0.0/)，改 `LICENSE` 一个文件即可。
