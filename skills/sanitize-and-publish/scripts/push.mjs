@@ -89,7 +89,7 @@ for (const f of files) {
   const p = `/repos/${repo}/contents/${f}`;
   const content = fs.readFileSync(local).toString('base64');
 
-  const cur = await attempt(f + '（取 sha）', () => api(p), 3);
+  const cur = await api(p);   // 新文件本来就会 404，这里不重试，免得白等 3 秒
   const body = { message: `${message} —— ${f}`, content };
   if (cur.ok) body.sha = cur.j.sha;
 
