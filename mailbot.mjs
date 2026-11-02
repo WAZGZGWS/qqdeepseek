@@ -123,15 +123,44 @@ function decryptWin(file) {
 }
 
 class Imap {
-  constructor(sock) { this.sock = sock; this.buf = Buffer.alloc(0); this.tag = 0; }
-  static connect() {
-    return new Promise((resolve, reject) => {
-      const s = tls.connect({ host: IMAP.host, port: IMAP.port, servername: IMAP.host }, () => resolve(new Imap(s)));
-      s.setTimeout(25000, () => { try { s.destroy(); } catch {} reject(new Error('IMAP 超时')); });
-      s.once('error', reject);
+  constructor(sock) {
+    this.sock = sock;
+    this.buf = Buffer.alloc(0);
+    this.tag = 0;
+    this.wake = null;
+    // 一建立连接就常驻监听：数据先落进 buf，别指望 cmd() 挂监听那一瞬间还能接住
+    sock.on('data', (d) => {
+      this.buf = Buffer.concat([this.buf, d]);
+      if (this.wake) { const w = this.wake; this.wake = null; w(); }
     });
   }
-  read() { return new Promise((res) => { const h = (d) => { this.buf = Buffer.concat([this.buf, d]); this.sock.off('data', h); res(); }; this.sock.on('data', h); }); }
+  static connect() {
+    return new Promise((resolve, reject) => {
+      const s = tls.connect({ host: IMAP.host, port: IMAP.port, servername: IMAP.host });
+      const im = new Imap(s);   // 立刻挂监听：招呼可能在 secureConnect 之前就到
+      s.setTimeout(25000, () => { try { s.destroy(); } catch {} reject(new Error('IMAP 超时')); });
+      s.once('error', reject);
+      s.once('secureConnect', () => {
+        // 等服务器把招呼说完再发命令。QQ 收到招呼前的命令会直接不回（今天卡了一晚上）
+        (async () => {
+          const deadline = Date.now() + 10000;
+          while (!/^\* OK/m.test(im.buf.toString('utf8'))) {
+            if (Date.now() > deadline) { try { s.destroy(); } catch {} reject(new Error('IMAP 招呼超时')); return; }
+            try { await im.read(Math.max(200, deadline - Date.now())); } catch (e) { try { s.destroy(); } catch {} reject(e); return; }
+          }
+          im.buf = Buffer.alloc(0);
+          resolve(im);
+        })();
+      });
+    });
+  }
+  // 数据由构造函数里的常驻监听收进 buf；这里只是等下一次「有数据了」的通知
+  read(ms = 20000) {
+    return new Promise((res, rej) => {
+      const t = setTimeout(() => { this.wake = null; rej(new Error('IMAP 读超时')); }, ms);
+      this.wake = () => { clearTimeout(t); res(); };
+    });
+  }
   async cmd(text) {
     this.tag += 1;
     const tag = `a${this.tag}`;
@@ -1538,12 +1567,14 @@ async function main() {
   beat();
   let poll = POLL_MS;
   let lastBeatLog = 0;
+  let fails = 0;   // 连续失败轮数：僵死了就退出，让 run-loop 起个新的
   for (;;) {
     ensureLock();   // 锁要是被别人删了，这一轮补回来
     let failed = false;
     try { await Promise.race([tick(config, state, auth, apiKey), sleep(150000).then(() => { throw new Error('这一轮超过 150 秒，放弃'); })]); }
     catch (e) {
       failed = true;
+      fails += 1;
       const msg = String((e && e.message) || e);
       log('这一轮出错：' + msg);
       // 认证失败跟"网络抖一下"不是一回事：授权码废了就只能他去重新生成，所以单独说清楚
@@ -1569,6 +1600,8 @@ async function main() {
       }
     } catch (e) { log('事实审计出错：' + e.message); }
     // 出错就退避，别每 100 秒猛撞同一个接口；成功就恢复正常节奏
+    if (!failed) fails = 0;
+    if (fails >= 3) { log('连续 ' + fails + ' 轮出错，退出让守护进程重启（僵死只能这样清）'); process.exit(1); }
     poll = failed ? Math.min(poll * 2, 10 * 60000) : POLL_MS;
     if (Date.now() - lastBeatLog > 25 * 60000) {
       lastBeatLog = Date.now();
