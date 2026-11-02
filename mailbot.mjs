@@ -590,7 +590,7 @@ function lengthMode() {
   return 'long';                  // 长信只留 10%，他说太长不看
 }
 
-async function askModel({ apiKey, history, body, facts, state }) {
+async function askModel({ apiKey, history, body, facts, state, hasAttach = false }) {
   const wx = await weather();
   const sit = situation(state, wx, body);
   const sleepy = nowHour() >= 2 && nowHour() < 5 && String(body || '').length <= 40;   // 凌晨迷糊，但你写长了照常回
@@ -641,8 +641,28 @@ async function askModel({ apiKey, history, body, facts, state }) {
     if (said || last) rules.push(`最近说过自己在：${said || '没说'}${last}。说过就是说过，别否认。`);
   }
   if (sit.wet) rules.push('你前两封已经提过天气了，这次别再提天气。');
+  if (hasAttach) rules.push('他这封带了附件（可能是照片），你看不到里面的内容——别装看得见，可以直说"图我看不到"。');
   if (ban.length) rules.push(`最近几封你老用「${ban.join('')}」，这次别用这些字。`);
   if (state.lastEmotion && state.lastEmotion !== '平静') rules.push(`上一封你的语气是「${state.lastEmotion}」，可以接着来，但别每封一个调。`);
+  // 她自己的日记：最近两封的心情，让她有连续的状态，不是每封重启
+  {
+    const diary = (state.meDiary || []).slice(-2);
+    if (diary.length) {
+      const d = new Date(diary[diary.length - 1].at);
+      const when = `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+      rules.push(`你自己的状态：${when}那封是「${diary[diary.length - 1].mood}」${diary.length > 1 ? '，再上一封是「' + diary[0].mood + '」' : ''}。语气可以有起伏，但别突然换个人。`);
+    }
+  }
+  // 旧事重提：四封里有一封，能想起一件 20 天前的事
+  if (Math.random() < 0.25) {
+    try {
+      const old = recentRaw(400, 60).filter((e) => Date.now() - e.at > 20 * 86400000);
+      if (old.length) {
+        const e = old[Math.floor(Math.random() * old.length)];
+        rules.push(`有件旧事：${String(e.text).slice(0, 40)}（${e.who === 'he' ? '他说的' : '你说的'}）。自然就顺口提一句，不自然就当没想起来，别硬扯。`);
+      }
+    } catch {}
+  }
   rules.push('他一段话里可能说了好几件事，你只接最戳你的那一件，别的先不管。');
   // 同一件事反复说：别再安慰，别再重复上次的说法
   const prevBodies = (history || []).filter((h) => h.role === 'user').slice(-4).map((h) => String(h.text || ''));
@@ -874,6 +894,8 @@ async function flushOutbox(config, state, auth) {
     if (!state.__memoryOff) recordLoops(state, item.his || '');
     state.unansweredProactive = 0;
     state.lastEmotion = item.emotion || state.lastEmotion;
+    // 她自己的日记：一封一条，只留最近 6 条（不发出去，只给她自己下次看）
+    state.meDiary = (state.meDiary || []).concat([{ at: Date.now(), mood: item.emotion || emotionOf(item.text) }]).slice(-6);
     state.recentExtras = (state.recentExtras || []).concat([item.extra].filter(Boolean)).slice(-3);
     if (item.extra) state.lastSituation = { extra: item.extra, at: Date.now() };   // 下一封可以接着这个状态
     state.recentWeather = (state.recentWeather || []).concat([!!item.weatherUsed]).slice(-4);
@@ -1061,7 +1083,7 @@ async function maybeProactive(apiKey, config, state, auth) {
   } catch (e) { log('主动来信失败：' + e.message); }
 }
 
-async function processOne({ body, subject, fromAddr, msgId, refs, config, state, auth, apiKey, bal }) {
+async function processOne({ body, subject, fromAddr, msgId, refs, hasAttach, config, state, auth, apiKey, bal }) {
   const secret = String(config.secret || '').trim();
   const everyTime = config.secretEveryTime === true;
   const needSecret = secret && (everyTime || !state.secretOkAt);
@@ -1101,7 +1123,7 @@ async function processOne({ body, subject, fromAddr, msgId, refs, config, state,
     log(`用模板回（${kind || (nightTpl ? '深夜短句' : why)}）：${text}`);
   } else {
     try {
-      const out = await askModel({ apiKey, history: state.history || [], body, facts: state.facts || [], state });
+      const out = await askModel({ apiKey, history: state.history || [], body, facts: state.facts || [], state, hasAttach });
       text = out.reply; facts = out.facts; usage = out.usage; mode = out.mode; sit = out.sit || {};
       if (!text) { log('回信被数字护栏清空了，退回模板'); text = pickTemplate('fallback', state); mode = 'template'; }
       const cost = addCost(state, usage);
@@ -1286,7 +1308,8 @@ async function tick(config, state, auth, apiKey) {
 
       const body = await parseBody(raw, subject);
       log('收到来信正文：' + body.slice(0, 30));
-      batch.push({ body, subject, fromAddr, msgId, refs });
+      const hasAttach = /Content-Disposition:[ \t]*attachment/i.test(raw) || /filename=/i.test(head);
+      batch.push({ body, subject, fromAddr, msgId, refs, hasAttach });
     }
 
     if (batch.length) {
@@ -1303,6 +1326,7 @@ async function tick(config, state, auth, apiKey) {
         fromAddr: batch[0].fromAddr,
         msgId: batch[batch.length - 1].msgId,
         refs: batch[batch.length - 1].refs,
+        hasAttach: batch.some((b) => b.hasAttach),
       };
       if (batch.length > 1) log(`他一口气发了 ${batch.length} 封，合成一封回`);
       try { await processOne({ ...merged, config, state, auth, apiKey, bal }); }
