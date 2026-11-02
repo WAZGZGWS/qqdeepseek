@@ -682,6 +682,18 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       rules.push(`你自己的状态：${when}那封是「${diary[diary.length - 1].mood}」${diary.length > 1 ? '，再上一封是「' + diary[0].mood + '」' : ''}。语气可以有起伏，但别突然换个人。`);
     }
   }
+  // 抓字眼：从他这封信里截一句原话（4~12 字，不带标点），四成的信用上
+  if (Math.random() < 0.4) {
+    const phrase = (String(body || '').match(/[^。！？，,\n\s]{4,12}/) || [''])[0];
+    if (phrase) rules.push(`他信里有句「${phrase}」——可以拎这句说一句（反驳、追问、或者学他口气），像人抓字眼；不自然就别用。`);
+  }
+  // 她自己的日程：只做一致性校验，不让她天天播报
+  {
+    const plan = state.mePlan;
+    if (plan && plan.text && Date.now() - plan.at < 3 * 86400000) {
+      rules.push(`你前几天说过「${plan.text}」。这封要是正好提到那天的事，别跟它对不上；不用特意提。`);
+    }
+  }
   // 她答应过的事：有就提一句，超过 7 天没兑现就当忘了（别一直念）
   {
     const ps = (state.promises || []).filter((p) => Date.now() - p.at < 7 * 86400000);
@@ -942,6 +954,11 @@ async function flushOutbox(config, state, auth) {
     state.lastEmotion = item.emotion || state.lastEmotion;
     // 她自己的日记：一封一条，只留最近 6 条（不发出去，只给她自己下次看）
     state.meDiary = (state.meDiary || []).concat([{ at: Date.now(), mood: item.emotion || emotionOf(item.text) }]).slice(-6);
+    // 她随口说的"今天/明天要干嘛"：只留最新一条，用来防上下封信互相打架
+    {
+      const pm = String(item.text || '').match(/(今天|明天|后天)(要|得|准备|打算)?[^。！？\n]{2,12}/);
+      if (pm) state.mePlan = { at: Date.now(), text: pm[0].trim().slice(0, 24) };
+    }
     // 她自己答应过的事：只记 7 天内的，最多 3 条
     {
       const fresh = extractPromises(item.text);
@@ -1028,6 +1045,31 @@ function monthKey(offset = 0) {
   const d = new Date();
   d.setMonth(d.getMonth() + offset);
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit' }).format(d);
+}
+
+/** 每隔一阵子，她给未来的他留一封短信，排到几天后再寄 */
+async function maybeFutureLetter({ apiKey, config, state, auth }) {
+  const cfg = config.future || {};
+  if (cfg.enabled === false) return;
+  const gapDays = Number(cfg.gapDays || 12);
+  if (state.lastFutureAt && Date.now() - state.lastFutureAt < gapDays * 86400000) return;
+  if ((state.outbox || []).some((o) => o && o.future)) return;   // 已经有一封在路上
+  try {
+    const delayDays = 3 + Math.floor(Math.random() * 8);   // 3~10 天后寄
+    const msg = `你给哥写一封短消息，现在不寄，${delayDays} 天后才寄出去。就当留给未来的他一句：说说你现在在想什么，或者到时候想问问他什么。用你平时的口吻，一两句，别煽情、别写祝福。\n输出格式：第一行"主题：xxx"（8 字以内），空一行，正文。`;
+    const out = await callModel(apiKey, [{ role: 'system', content: persona() }, { role: 'user', content: msg }], 260);
+    const cost = addCost(state, out.usage);
+    const m = out.text.match(/^主题[:：]\s*(.+)\n+([\s\S]+)$/);
+    const subject = (m ? m[1] : '留着').trim().slice(0, 20);
+    let body = humanize((m ? m[2] : out.text).trim(), 220);
+    body = guardNumbers(body, '');          // 未来的信没有上下文，数字一律不许
+    body = guardTime(body, nowHour());      // 也别在早上写"晚安"
+    if (!body) return;
+    enqueue(state, { dueAt: Date.now() + delayDays * 86400000 + 3600 * 1000, to: config.owner || MAIL_USER, subject, text: body, future: true, createdAt: Date.now() });
+    state.lastFutureAt = Date.now();
+    saveState(state);
+    log(`给未来留了一封（${delayDays} 天后寄）：${subject}（约 ${cost.toFixed(5)} 元）`);
+  } catch (e) { log('写未来信失败：' + e.message); }
 }
 
 /** 到点了没：月记（每月 1 号早上）、年记（12-31 晚）、他生日（当天早 8 点）、她生日（当天早 9 点） */
@@ -1643,6 +1685,7 @@ async function main() {
     beat();
     try { await maybeProactive(apiKey, config, state, auth); } catch (e) { log('主动来信出错：' + e.message); }
     try { await maybeSummaries(apiKey, config, state, auth); } catch (e) { log('写回顾出错：' + e.message); }
+    try { await maybeFutureLetter({ apiKey, config, state, auth }); } catch (e) { log('未来信出错：' + e.message); }
     // 每天审计一次长期事实，把没依据的自动清掉（清掉的会留档）
     try {
       if (!state.__factsOff && (!state.lastFactsAudit || Date.now() - state.lastFactsAudit > 24 * 3600 * 1000)) {
