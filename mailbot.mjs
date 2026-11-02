@@ -1210,6 +1210,21 @@ function popupTopUp(bal) {
   } catch {}
 }
 
+let mailSession = null;   // 常驻的 IMAP 会话：别每 100 秒重登一次（一天 864 次登录，QQ 会当异常）
+async function ensureImap(auth, state) {
+  if (mailSession) {
+    try { await mailSession.cmd('NOOP'); return mailSession; }
+    catch { try { mailSession.quit(); } catch {} mailSession = null; }   // 断了就重连
+  }
+  const im = await Imap.connect();
+  await im.cmd(`LOGIN "${MAIL_USER}" "${auth}"`);
+  state.lastImapOk = Date.now();
+  await im.cmd('SELECT INBOX');
+  mailSession = im;
+  log('信箱连上了，接下来保持连接（用 NOOP 探活）');
+  return im;
+}
+
 async function tick(config, state, auth, apiKey) {
   const bal = await balanceOf(apiKey);
   state.bal = bal;
@@ -1234,11 +1249,8 @@ async function tick(config, state, auth, apiKey) {
     log('余额不到 1 元，今天已经说过明天聊了，信箱先不动');
     return { handled: 0 };
   }
-  const imap = await Imap.connect();
+  const imap = await ensureImap(auth, state);
   try {
-    await imap.cmd(`LOGIN "${MAIL_USER}" "${auth}"`);
-    state.lastImapOk = Date.now();   // 授权码还活着的证据，坏的时候用来算"多久没连上"
-    await imap.cmd('SELECT INBOX');
     // 不再依赖"未读"标记（别的客户端预览一下就会把信标已读，她就不回了）：
     // 每次扫最近 20 封，靠 UID + Message-ID 去重
     const search = await imap.cmd('UID SEARCH ALL');
@@ -1320,7 +1332,10 @@ async function tick(config, state, auth, apiKey) {
       const used = Number(state.usedToday == null ? (state.count || 0) : state.usedToday);
       const capDay = Number(config.dailyCap || 35);
       if (used >= capDay) {
-        log(`今天的额度用完了（${used}/${capDay}，一来一回都算），剩下的信留到明天（不标记已读）`);
+        if (state.quotaLoggedDay !== today()) {
+          state.quotaLoggedDay = today();
+          log(`今天的额度用完了（${used}/${capDay}，一来一回都算），剩下的信留到明天（不标记已读）`);
+        }
         if (state.quotaNotifiedDay !== today()) {
           state.quotaNotifiedDay = today();
           saveState(state);
@@ -1363,7 +1378,7 @@ async function tick(config, state, auth, apiKey) {
       catch (e) { log('处理来信出错：' + e.message); await alertOnce('generate', '生成回信时出错：' + e.message); }
     }
     return { handled: 1 };
-  } finally { imap.quit(); }
+  } finally { /* 不 quit：连接留着，下次用 NOOP 探活 */ }
 }
 
 function single() {
@@ -1584,6 +1599,8 @@ async function main() {
     catch (e) {
       failed = true;
       fails += 1;
+      try { if (mailSession) { mailSession.quit(); } } catch {}
+      mailSession = null;   // 这一轮坏了，八成是连接，丢掉重连
       const msg = String((e && e.message) || e);
       log('这一轮出错：' + msg);
       // 认证失败跟"网络抖一下"不是一回事：授权码废了就只能他去重新生成，所以单独说清楚
