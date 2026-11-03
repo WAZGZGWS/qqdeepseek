@@ -264,7 +264,7 @@ async function callModel(apiKey, messages, maxTokens = 380, temperature = 1.25) 
   const r = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + apiKey },
-    body: JSON.stringify({ model: 'deepseek-flash', messages, max_tokens: maxTokens, temperature, top_p: 0.95, frequency_penalty: 0.5, presence_penalty: 0.4 }),
+    body: JSON.stringify({ model: 'deepseek-flash', messages, max_tokens: maxTokens, temperature, top_p: 0.95, frequency_penalty: 0.2, presence_penalty: 0.1 }),
     signal: AbortSignal.timeout(60000),
   });
   const j = await r.json();
@@ -752,6 +752,7 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
       }
     } catch {}
   }
+  rules.push('别端着说话：可以「诶」「哎」「说真的」「你猜」开头，句子允许不完整，尾巴可以拖一个语气词。');
   rules.push('他一段话里可能说了好几件事，你只接最戳你的那一件，别的先不管。');
   // 同一件事反复说：别再安慰，别再重复上次的说法
   const prevBodies = (history || []).filter((h) => h.role === 'user').slice(-4).map((h) => String(h.text || ''));
@@ -798,6 +799,12 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
 
 他：我今天有点难受
 她：哪儿难受？别自己扛着。
+
+他：楼下那家面馆今天关门了
+她：啊？那我白惦记一天了，还想说下班顺路呢。
+
+他：我今天不想动
+她：那就不动呗，躺着。我在呢。
 ` + (fs2 ? '\n\n# 你记得关于哥的事\n' + fs2 : '') + (hint ? '\n\n' + hint : '') + (olderBrief ? '\n\n# 更早聊过的（只留要点）\n' + olderBrief : ''),
     },
     ...histFull.map((h) => ({ role: h.role, content: h.text })),
