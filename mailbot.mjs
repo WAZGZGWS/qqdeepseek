@@ -667,14 +667,21 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
   else if (mode === 'short') rules.push('这次只写一句，越短越好，两三个字也行（"啊？""行吧。""你管我呢。""服了。"），别解释。');
   else if (mode === 'long') rules.push('这次可以写三四句，说点具体的，但别写小作文。');
   else rules.push('一两句，最多三句。');
-  rules.push(`现在是${week}${tp.slot}${sit.weather ? '，' + sit.weather : ''}${sit.extra ? '，你' + sit.extra : ''}。这个点适合聊：${tp.ok}；别说：${tp.avoid}。`);
+  {
+    // 一句话把时间说完整：星期几、工作日还是周末、他这个点大概在干嘛、几点天黑
+    const weekend = [0, 6].includes(new Date().getDay());
+    const h = nowHour();
+    const likely = weekend
+      ? (h < 9 ? '多半还在睡' : h < 12 ? '刚起，慢慢弄早饭' : h < 14 ? '在吃午饭，或者发呆' : h < 18 ? '在外面晃，或者在家躺着' : h < 23 ? '在家放松' : '该睡了')
+      : (h < 9 ? '在洗漱、赶着出门' : h < 12 ? '在上班' : h < 14 ? '午休吃饭' : h < 18 ? '还在上班，快熬不住了' : h < 20 ? '刚下班，在吃饭' : h < 23 ? '在家歇着' : '该睡了');
+    const me = [sit.extra ? '你' + sit.extra : '', sit.weather || ''].filter(Boolean).join('，');
+    rules.push(`现在是${week}${tp.slot}，${weekend ? '周末' : '工作日'}。他这会儿${likely}${me ? '。' + me : ''}。这个点适合聊：${tp.ok}；别说：${tp.avoid}。`);
+  }
   if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
   if (/(累|难受|崩溃|撑不住|哭|病|疼|委屈|吵架|分手)/.test(String(body || ''))) rules.push('他这封在说难受的事：先接他的话，别急着说自己刚在干嘛。');
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
-  // 她没有日历常识：十一月五点就黑，夏天七点还亮着。把今天的日出日落给她。
-  if (wx.sunset) {
-    rules.push(`今天这里 ${wx.sunset} 天黑${wx.sunrise ? '，' + wx.sunrise + ' 天亮' : ''}。别拿夏天的感觉说事——这个点说天还亮着、或者嫌别人五点吃晚饭太早，都会显得没常识。`);
-  }
+  // 她没有日历常识：十一月五点就黑，夏天七点还亮着
+  if (wx.sunset) rules.push(`天黑得早：${wx.sunset} 就黑了（${wx.sunrise ? wx.sunrise + ' 天亮' : '天亮得也晚'}），别拿夏天的感觉判断。`);
   rules.push('今天说过的状态别反口：说在等外卖就不能说刚睡醒，说刚睡醒就别提着出门。');
   {
     // 她自己说过的话要有账本：最近三封说过在干嘛 + 上一封的状态，免得她反问"我啥时候说过了"
