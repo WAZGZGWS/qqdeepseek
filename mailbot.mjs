@@ -481,7 +481,7 @@ let wxCache = { at: 0, text: '', min: null, max: null };
 async function weather() {
   if (Date.now() - wxCache.at < 3 * 3600 * 1000) return wxCache;
   try {
-    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=29.7136&longitude=120.2364&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FShanghai&forecast_days=1', { signal: AbortSignal.timeout(6000) });
+    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=29.7136&longitude=120.2364&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1', { signal: AbortSignal.timeout(6000) });
     if (r.ok) {
       const j = await r.json();
       const c = j?.current?.weather_code;
@@ -489,7 +489,14 @@ async function weather() {
       const t2 = Number(j?.current?.temperature_2m);
       const min = Number(j?.daily?.temperature_2m_min?.[0]);
       const max = Number(j?.daily?.temperature_2m_max?.[0]);
-      wxCache = { at: Date.now(), min, max, text: `外面${map[c] || '阴晴不定'}，${Math.round(t2)}度${Number.isFinite(min) ? `（${Math.round(min)}~${Math.round(max)}度）` : ''}` };
+      const hhmm = (v) => {
+        const t = String(v || '');
+        const m = t.match(/T(\d{2}:\d{2})/);
+        return m ? m[1] : '';
+      };
+      const sunrise = hhmm(j?.daily?.sunrise?.[0]);
+      const sunset = hhmm(j?.daily?.sunset?.[0]);
+      wxCache = { at: Date.now(), min, max, sunrise, sunset, text: `外面${map[c] || '阴晴不定'}，${Math.round(t2)}度${Number.isFinite(min) ? `（${Math.round(min)}~${Math.round(max)}度）` : ''}` };
     }
   } catch {}
   return wxCache;
@@ -664,6 +671,10 @@ async function askModel({ apiKey, history, body, facts, state, hasAttach = false
   if (sit.continuing) rules.push(`你上一封说自己在干嘛，这次顺着往下推一步（比如等外卖→在吃饭→刚吃完），别跳去不相干的事。`);
   if (/(累|难受|崩溃|撑不住|哭|病|疼|委屈|吵架|分手)/.test(String(body || ''))) rules.push('他这封在说难受的事：先接他的话，别急着说自己刚在干嘛。');
   rules.push(`今天是${dateStr}${gapStr ? '，' + gapStr : ''}。`);
+  // 她没有日历常识：十一月五点就黑，夏天七点还亮着。把今天的日出日落给她。
+  if (wx.sunset) {
+    rules.push(`今天这里 ${wx.sunset} 天黑${wx.sunrise ? '，' + wx.sunrise + ' 天亮' : ''}。别拿夏天的感觉说事——这个点说天还亮着、或者嫌别人五点吃晚饭太早，都会显得没常识。`);
+  }
   rules.push('今天说过的状态别反口：说在等外卖就不能说刚睡醒，说刚睡醒就别提着出门。');
   {
     // 她自己说过的话要有账本：最近三封说过在干嘛 + 上一封的状态，免得她反问"我啥时候说过了"
